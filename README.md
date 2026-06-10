@@ -1,16 +1,16 @@
 # HormonicFormer: A Field-Theoretic Neural Framework (Abandoned)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Status: Abandoned](https://img.shields.io/badge/Status-Abandoned-red.svg)]()
+[![Status: Open Discussion](https://img.shields.io/badge/Status-Open%20Discussion-green.svg)]()
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-> **Status: 🚫 ABANDONED**— This project explored a novel neural architecture derived from physics but failed to achieve competitive performance on standard benchmarks. Published here for transparency and as a learning resource.
+> **Status: 🔓 OPEN FOR DISCUSSION** — A failed experiment in deriving neural architectures from physics. Published as a community puzzle: *Can you fix it?*
 
-**🔥 为什么这个失败项目值得关注？**
-- 6个可证明的数学定理，全部验证通过
-- 从第一性原理（场论）推导神经网络架构
-- 透明的失败分析 — 比成功的 PR 更稀缺
-- 证明了"优美的数学 ≠ 实用的工程"
+**🔥 开放性探讨邀请**
+- 6个定理全部验证，但模型性能崩了（PPL 805 vs GPT-2的18）
+- 问题已定位，但作者放弃继续投入
+- **邀请社区一起探讨**：这个架构还有救吗？
+- 适合方向：架构改良、任务适配、理论分析
 
 ---
 
@@ -154,6 +154,52 @@ numpy
 scipy (for SymPy verification)
 sympy (for theorem verification)
 ```
+
+## 🤔 开放性问题（邀请社区探讨）
+
+### 核心问题：这个架构还有救吗？
+
+**作者已放弃，但理论可能是对的，实现可能是错的。**
+
+#### 问题 1：任务错配
+> CGL动力学适合振荡/连续数据，但语言是离散的。是否应该换任务？
+- 时间序列预测？
+- 物理模拟？
+- 连续控制？
+
+#### 问题 2：Hebbian学习太慢
+> η=10⁻³跟不上梯度下降。是否应该：
+- 增大学习率？
+- 改成可学习的η？
+- 完全去掉Hebbian，只用CGL？
+
+#### 问题 3：超参数爆炸
+> (α,β,D) × (θ_c, η+, η-) × (da, cb) = 调参噩梦。是否应该：
+- 用进化算法自动搜索？
+- 简化架构，去掉一些组件？
+- 从物理约束推导超参数关系？
+
+#### 问题 4：O(S²)内存
+> G矩阵和attention一样贵。是否应该：
+- 稀疏化G矩阵？
+- 用低秩近似？
+- 完全去掉Hebbian？
+
+#### 问题 5：实现开销
+> 理论1.5×快，实际3×慢。是否应该：
+- 用CUDA重写核心算子？
+- 简化数值积分（目前是RK4）？
+
+### 如何参与讨论
+
+1. **开 Issue**：提出你的改良方案
+2. **发 PR**：实现并测试你的想法  
+3. **写分析**：哪怕只是理论分析也欢迎
+4. **做实验**：在特定任务上测试（作者只试了LM和分类）
+
+**奖励**：如果你的改良让WikiText-103 PPL降到100以下，作者请你喝咖啡 ☕
+
+---
 
 ## 🚀 如何让更多人看到这个项目
 
