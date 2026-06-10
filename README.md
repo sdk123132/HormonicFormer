@@ -37,12 +37,16 @@ Despite proving 6 theoretical properties and achieving elegant mathematical resu
 | Copy Task (S=64) | 100% ✓ | Transformer: 100% | ⚠️ Parity, 3× slower |
 | Char LM (tiny) | PPL 5.68 | — | ✓ Works on toy scale |
 
-**Root causes of failure:**
-1. **Architecture-task mismatch** — CGL dynamics suit oscillatory/continuous data, not discrete token prediction
-2. **Hebbian update too slow** — η=10⁻³ can't keep up with gradient descent
-3. **Hyperparameter explosion** — CGL (α,β,D) × Hebbian (θ_c, η+, η-) × Neuromod (da, cb) = nightmare to tune
-4. **O(S²) Hebbian matrix** — The G matrix that was supposed to replace attention has the same memory cost
-5. **Complexity overhead** — 1.5× faster than Transformer in theory, but 3× slower in practice due to implementation overhead
+**Possible causes of failure:**
+
+1. **⚠️ Platform limitation** — Only tested on RTX 5070 (12GB) and Hygon DCU. Never tested on A100/H100/TPU.
+2. **Architecture-task mismatch** — CGL dynamics suit oscillatory/continuous data, not discrete token prediction
+3. **Hebbian update too slow** — η=10⁻³ can't keep up with gradient descent
+4. **Hyperparameter explosion** — CGL (α,β,D) × Hebbian (θ_c, η+, η-) × Neuromod (da, cb) = nightmare to tune
+5. **O(S²) Hebbian matrix** — The G matrix that was supposed to replace attention has the same memory cost
+6. **Implementation overhead** — 1.5× faster in theory, 3× slower in practice (Python loops, no CUDA kernels)
+
+> **关键疑问**：PPL 805 是因为架构不行，还是因为5070显存不够、只能用极小batch size导致的优化困难？
 
 ## What Worked (Theoretically)
 
@@ -157,9 +161,35 @@ sympy (for theorem verification)
 
 ## 🤔 开放性问题（邀请社区探讨）
 
-### 核心问题：这个架构还有救吗？
+### 核心问题：失败是架构问题还是平台问题？
 
-**作者已放弃，但理论可能是对的，实现可能是错的。**
+**重要提示：作者只在以下平台测试过：**
+- 🖥️ **NVIDIA RTX 5070** (12GB VRAM)
+- 🖥️ **Hygon DCU** (国产AI加速卡)
+
+**从未在以下平台测试：**
+- ❌ A100/H100 (数据中心GPU)
+- ❌ TPU (Google)
+- ❌ 多卡分布式训练
+- ❌ 混合精度 (AMP/FP16/BF16)
+- ❌ 不同CUDA版本 (仅用CUDA 12.x)
+
+---
+
+#### 🔥 问题 0：平台适配？（最高优先级）
+> 性能差可能是因为平台限制，而非架构问题
+- 5070的显存带宽是否成为瓶颈？
+- DCU的算子支持是否不完善？
+- 混合精度训练能否解锁性能？
+- 大规模集群训练是否会不同？
+
+**如果你有以下资源，欢迎测试：**
+- A100/H100 (40GB/80GB)
+- 多卡节点 (4x/8x GPU)
+- TPU v4/v5
+- 不同的PyTorch/CUDA版本
+
+---
 
 #### 问题 1：任务错配
 > CGL动力学适合振荡/连续数据，但语言是离散的。是否应该换任务？
@@ -189,6 +219,7 @@ sympy (for theorem verification)
 > 理论1.5×快，实际3×慢。是否应该：
 - 用CUDA重写核心算子？
 - 简化数值积分（目前是RK4）？
+- 使用TorchScript/ONNX优化？
 
 ### 如何参与讨论
 
