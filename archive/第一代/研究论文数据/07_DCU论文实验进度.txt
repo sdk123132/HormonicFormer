@@ -1,0 +1,26 @@
+======================================================================
+DCU 论文实验进度跟踪
+======================================================================
+
+服务器: ssh.dzai.scnet.cn:50068 (K100_AI 64GB)
+开始: 2026-05-30 23:05
+记录: 2026-05-31 09:20
+
+--- 实验设计 ---
+数据: WikiText-103 全量 (118.5M tokens)
+配置: seq_len=1024, BS=48, 20K steps, LR=3e-4
+
+Run 1: Hormonic + Hebbian Warmup (107.1M params) — 进行中
+  当前进度: Step 5000/20000 (25%)
+  Train PPL: ~550
+  Val PPL: 38K - 90K
+  VRAM: 51.4 GB / 68.7 GB
+  状态: 正常训练中
+
+Run 2: Hormonic - No Hebbian (107.1M params) — 等待中
+Run 3: GPT-2 Transformer (124M params) — 等待中
+
+--- 历史记录 ---
+BS=32: 正常跑 (paper_exp_log_bs32.txt)
+BS=64: OOM (RAM不足)
+BS=48: 当前配置 (运行中)

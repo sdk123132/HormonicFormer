@@ -1,0 +1,20 @@
+======================================================================
+Hormonic vs Transformer 完整对决数据
+======================================================================
+
+任务: Copy Task S=512
+同等配置: d_model=64
+
+Hormonic (n_layers=1, n_heads=4):
+  - Step 1: 70% acc
+  - Step 2: 80% acc
+  - Step 3+: 100% acc
+
+Transformer (n_layers=1, n_heads=4):
+  - Step 1: 100% acc
+  - Step 2: ~100% acc
+
+效率:
+  - Hormonic: 37K params, 21s
+  - Transformer: 51K params, 0.4s
+  - Transformer 快 52x，但多 27% 参数

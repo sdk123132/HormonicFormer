@@ -1,0 +1,171 @@
+======================================================================
+DCU 服务器训练完整日志
+======================================================================
+
+--- Run 1: Hormonic + Hebbian (已停止) ---
+
+======================================================================
+HormonicFormer Paper Experiment — 3-Way WikiText-103
+======================================================================
+Device: cuda
+GPU: K100_AI
+VRAM: 68.7 GB
+
+Loading pre-tokenized WikiText-103...
+Total tokens: 118,496,733 (118.5M)
+Train: 117,996,733, Val: 500,000
+Vocab: 50257
+  Dataset: 117,995,708 samples
+  Dataset: 498,975 samples
+
+Config: seq_len=1024, BS=48, steps=20000, LR=0.0003
+
+██████████████████████████████████████████████████████████████████████
+RUN 1: Hormonic + Hebbian Warmup
+██████████████████████████████████████████████████████████████████████
+
+======================================================================
+Training: Hormonic+Hebbian
+Parameters: 107.1M
+======================================================================
+  Epoch 0: Hebbian LR = 0.0010
+  [Hormonic+Hebbian] Step     0: Loss=10.981 PPL=58758.9 LR=1.20e-06 25s VRAM=42.1GB
+  [Hormonic+Hebbian] Step   200: Loss=7.319 PPL=1508.3 LR=1.21e-04 1423s VRAM=43.0GB
+  [Hormonic+Hebbian] Step   400: Loss=7.057 PPL=1160.9 LR=2.41e-04 2820s VRAM=43.0GB
+  [Hormonic+Hebbian] Step   600: Loss=6.862 PPL=954.9 LR=3.00e-04 4215s VRAM=43.0GB
+  [Hormonic+Hebbian] Step   800: Loss=6.830 PPL=925.6 LR=3.00e-04 5612s VRAM=43.0GB
+  [Hormonic+Hebbian] Step  1000: Loss=6.860 PPL=953.4 LR=3.00e-04 7007s VRAM=43.0GB
+  [Hormonic+Hebbian] >>> Val Loss=8.722 Val PPL=6138.5 *BEST*
+  [Hormonic+Hebbian] Step  1200: Loss=6.691 PPL=805.3 LR=2.99e-04 8531s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  1400: Loss=6.678 PPL=794.6 LR=2.98e-04 9927s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  1600: Loss=6.638 PPL=763.4 LR=2.98e-04 11326s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  1800: Loss=6.656 PPL=777.3 LR=2.97e-04 12724s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  2000: Loss=6.547 PPL=697.3 LR=2.96e-04 14122s VRAM=51.4GB
+  [Hormonic+Hebbian] >>> Val Loss=10.572 Val PPL=39011.3 
+  [Hormonic+Hebbian] Step  2200: Loss=6.554 PPL=701.8 LR=2.94e-04 15649s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  2400: Loss=6.640 PPL=765.3 LR=2.93e-04 17046s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  2600: Loss=6.447 PPL=631.1 LR=2.91e-04 18445s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  2800: Loss=6.452 PPL=633.8 LR=2.90e-04 19843s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  3000: Loss=6.432 PPL=621.3 LR=2.88e-04 21236s VRAM=51.4GB
+  [Hormonic+Hebbian] >>> Val Loss=10.539 Val PPL=37768.3 
+  [Hormonic+Hebbian] Step  3200: Loss=6.481 PPL=652.5 LR=2.86e-04 22765s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  3400: Loss=6.368 PPL=582.9 LR=2.84e-04 24164s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  3600: Loss=6.339 PPL=566.1 LR=2.82e-04 25562s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  3800: Loss=6.424 PPL=616.6 LR=2.79e-04 26961s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  4000: Loss=6.387 PPL=594.1 LR=2.77e-04 28359s VRAM=51.4GB
+  [Hormonic+Hebbian] >>> Val Loss=10.972 Val PPL=58228.4 
+  [Hormonic+Hebbian] Step  4200: Loss=6.441 PPL=627.1 LR=2.74e-04 29885s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  4400: Loss=6.314 PPL=552.1 LR=2.71e-04 31284s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  4600: Loss=6.308 PPL=549.2 LR=2.68e-04 32681s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  4800: Loss=6.281 PPL=534.2 LR=2.65e-04 34076s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  5000: Loss=6.281 PPL=534.3 LR=2.62e-04 35473s VRAM=51.4GB
+  [Hormonic+Hebbian] >>> Val Loss=11.406 Val PPL=89864.0 
+  [Hormonic+Hebbian] Step  5200: Loss=6.309 PPL=549.7 LR=2.59e-04 36999s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  5400: Loss=6.270 PPL=528.5 LR=2.56e-04 38396s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  5600: Loss=6.174 PPL=479.9 LR=2.52e-04 39795s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  5800: Loss=6.214 PPL=499.7 LR=2.49e-04 41194s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  6000: Loss=6.243 PPL=514.3 LR=2.45e-04 42588s VRAM=51.4GB
+  [Hormonic+Hebbian] >>> Val Loss=11.730 Val PPL=124300.1 
+  [Hormonic+Hebbian] Step  6200: Loss=6.168 PPL=477.1 LR=2.41e-04 44106s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  6400: Loss=6.217 PPL=501.1 LR=2.37e-04 45496s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  6600: Loss=6.123 PPL=456.5 LR=2.33e-04 46882s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  6800: Loss=6.152 PPL=469.6 LR=2.29e-04 48264s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  7000: Loss=6.168 PPL=477.0 LR=2.25e-04 49647s VRAM=51.4GB
+  [Hormonic+Hebbian] >>> Val Loss=11.973 Val PPL=158342.1 
+  [Hormonic+Hebbian] Step  7200: Loss=6.226 PPL=506.0 LR=2.21e-04 51156s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  7400: Loss=6.102 PPL=446.8 LR=2.16e-04 52537s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  7600: Loss=6.132 PPL=460.4 LR=2.12e-04 53917s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  7800: Loss=6.083 PPL=438.5 LR=2.08e-04 55299s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  8000: Loss=6.097 PPL=444.4 LR=2.03e-04 56679s VRAM=51.4GB
+  [Hormonic+Hebbian] >>> Val Loss=12.319 Val PPL=223807.9 
+  [Hormonic+Hebbian] Step  8200: Loss=6.110 PPL=450.3 LR=1.99e-04 58188s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  8400: Loss=6.020 PPL=411.4 LR=1.94e-04 59570s VRAM=51.4GB
+  [Hormonic+Hebbian] Step  8600: Loss=6.133 PPL=460.8 LR=1.89e-04 60950s VRAM=51.4GB
+
+
+--- Run 4: Pure CGL (进行中) ---
+
+======================================================================
+Paper Run 4: Pure CGL (No Hebbian, Strong Reg)
+======================================================================
+Device: cuda
+GPU: K100_AI
+VRAM: 68.7 GB
+
+Loading pre-tokenized WikiText-103...
+Total tokens: 118,496,733 (118.5M)
+Train: 117,996,733, Val: 500,000
+Vocab: 50257
+
+Config: seq_len=1024, BS=48, steps=10000, LR=0.0003
+HEBBIAN: OFF | n_steps=1 | weight_decay=0.1 | dropout=0.3
+
+██████████████████████████████████████████████████████████████████████
+RUN 4: Pure CGL (No Hebbian, Strong Reg)
+██████████████████████████████████████████████████████████████████████
+
+======================================================================
+Training: PureCGL-n1-wd01
+Parameters: 81.9M
+======================================================================
+  [PureCGL-n1-wd01] Step     0: Loss=10.989 PPL=59218.5 LR=3.00e-06 19s VRAM=42.0GB
+  [PureCGL-n1-wd01] Step   200: Loss=7.054 PPL=1157.7 LR=3.00e-04 672s VRAM=42.7GB
+  [PureCGL-n1-wd01] Step   400: Loss=6.894 PPL=986.3 LR=3.00e-04 1325s VRAM=42.7GB
+  [PureCGL-n1-wd01] Step   600: Loss=6.806 PPL=903.0 LR=2.99e-04 1972s VRAM=42.7GB
+  [PureCGL-n1-wd01] Step   800: Loss=6.814 PPL=910.1 LR=2.97e-04 2623s VRAM=42.7GB
+  [PureCGL-n1-wd01] Step  1000: Loss=6.743 PPL=848.0 LR=2.95e-04 3275s VRAM=42.7GB
+  [PureCGL-n1-wd01] >>> Val Loss=6.820 Val PPL=915.8 *BEST*
+  [PureCGL-n1-wd01] Step  1200: Loss=6.647 PPL=770.1 LR=2.92e-04 4021s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  1400: Loss=6.777 PPL=877.6 LR=2.89e-04 4669s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  1600: Loss=6.687 PPL=801.9 LR=2.85e-04 5322s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  1800: Loss=6.654 PPL=776.1 LR=2.81e-04 5976s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  2000: Loss=6.582 PPL=721.6 LR=2.76e-04 6627s VRAM=51.1GB
+  [PureCGL-n1-wd01] >>> Val Loss=6.750 Val PPL=854.0 *BEST*
+  [PureCGL-n1-wd01] Step  2200: Loss=6.586 PPL=724.6 LR=2.70e-04 7370s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  2400: Loss=6.602 PPL=736.3 LR=2.64e-04 8021s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  2600: Loss=6.566 PPL=710.8 LR=2.58e-04 8673s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  2800: Loss=6.582 PPL=722.1 LR=2.51e-04 9322s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  3000: Loss=6.526 PPL=682.3 LR=2.43e-04 9971s VRAM=51.1GB
+  [PureCGL-n1-wd01] >>> Val Loss=6.709 Val PPL=819.4 *BEST*
+  [PureCGL-n1-wd01] Step  3200: Loss=6.585 PPL=724.0 LR=2.36e-04 10712s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  3400: Loss=6.555 PPL=702.5 LR=2.28e-04 11362s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  3600: Loss=6.493 PPL=660.7 LR=2.19e-04 12010s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  3800: Loss=6.606 PPL=739.4 LR=2.11e-04 12661s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  4000: Loss=6.509 PPL=671.2 LR=2.02e-04 13310s VRAM=51.1GB
+  [PureCGL-n1-wd01] >>> Val Loss=6.674 Val PPL=791.2 *BEST*
+  [PureCGL-n1-wd01] Step  4200: Loss=6.509 PPL=671.2 LR=1.93e-04 14051s VRAM=51.1GB
+  [PureCGL-n1-wd01] Step  4400: Loss=6.580 PPL=720.8 LR=1.83e-04 14701s VRAM=51.1GB
+
+
+--- 早期 BS=32 测试 ---
+
+======================================================================
+HormonicFormer Paper Experiment — 3-Way WikiText-103
+======================================================================
+Device: cuda
+GPU: K100_AI
+VRAM: 68.7 GB
+
+Loading pre-tokenized WikiText-103...
+Total tokens: 118,496,733 (118.5M)
+Train: 117,996,733, Val: 500,000
+Vocab: 50257
+
+Config: seq_len=1024, BS=32, steps=20000, LR=0.0003
+
+██████████████████████████████████████████████████████████████████████
+RUN 1: Hormonic + Hebbian Warmup
+██████████████████████████████████████████████████████████████████████
+
+======================================================================
+Training: Hormonic+Hebbian
+Parameters: 107.1M
+======================================================================
+  Epoch 0: Hebbian LR = 0.0010
+  [Hormonic+Hebbian] Step     0: Loss=10.970 PPL=58127.2 LR=1.20e-06 25s VRAM=28.2GB
+  [Hormonic+Hebbian] Step   200: Loss=7.381 PPL=1605.8 LR=1.21e-04 795s VRAM=29.1GB
+  [Hormonic+Hebbian] Step   400: Loss=7.093 PPL=1203.7 LR=2.41e-04 1560s VRAM=29.1GB
+  [Hormonic+Hebbian] Step   600: Loss=6.968 PPL=1061.7 LR=3.00e-04 2319s VRAM=29.1GB
+  [Hormonic+Hebbian] Step   800: Loss=6.868 PPL=960.9 LR=3.00e-04 3085s VRAM=29.1GB
+  [Hormonic+Hebbian] Step  1000: Loss=6.793 PPL=891.4 LR=3.00e-04 3850s VRAM=29.1GB
+  [Hormonic+Hebbian] >>> Val Loss=8.908 Val PPL=7388.5 *BEST*
