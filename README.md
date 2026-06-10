@@ -1,6 +1,16 @@
 # HormonicFormer: A Field-Theoretic Neural Framework (Abandoned)
 
-> **Status: 🚫 ABANDONED** — This project explored a novel neural architecture derived from physics but failed to achieve competitive performance on standard benchmarks. Published here for transparency and as a learning resource.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Status: Abandoned](https://img.shields.io/badge/Status-Abandoned-red.svg)]()
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+
+> **Status: 🚫 ABANDONED**— This project explored a novel neural architecture derived from physics but failed to achieve competitive performance on standard benchmarks. Published here for transparency and as a learning resource.
+
+**🔥 为什么这个失败项目值得关注？**
+- 6个可证明的数学定理，全部验证通过
+- 从第一性原理（场论）推导神经网络架构
+- 透明的失败分析 — 比成功的 PR 更稀缺
+- 证明了"优美的数学 ≠ 实用的工程"
 
 ---
 
@@ -145,18 +155,49 @@ scipy (for SymPy verification)
 sympy (for theorem verification)
 ```
 
-## Citation
+## 🚀 如何让更多人看到这个项目
 
-This is unpublished abandoned work. If you find the theoretical analysis useful:
+### 分享渠道
 
-```
+1. **Reddit**
+   - r/MachineLearning: [分享失败的研究经验]
+   - r/LocalLLaMA: [另类架构探索]
+   - r/CompSci: [从物理第一原理设计神经网络]
+
+2. **Twitter/X**
+   - 标签: #NeuralArchitecture #FailedExperiments #FieldTheory #DeepLearning
+   - 示例推文: "6个定理全部验证，但模型PPL 805 vs GPT-2的18。这就是HormonicFormer——一个从CGL场方程推导出的失败神经网络。"
+
+3. **Hacker News**
+   - 标题: "Show HN: A neural architecture derived from physics that failed spectacularly"
+   - 重点: 透明的失败分析比成功的 PR 更稀缺
+
+4. **中文社区**
+   - 知乎: 如何优雅地失败——一个物理启发的神经网络项目复盘
+   - 小红书: 科研失败案例分享
+   - V2EX: 独立研究项目分享
+
+5. **学术社区**
+   - Papers With Code: 添加为"失败案例"
+   - GitHub Awesome Lists: 提议添加到 awesome-failure 或类似列表
+
+### 引用格式
+
+```bibtex
 @misc{hormonicformer2026,
   title={HormonicFormer: A Field-Theoretic Framework for Neural Sequence Modeling (Abandoned)},
   author={[Author]},
   year={2026},
-  note={Unpublished. Theoretical results valid; empirical performance insufficient for publication.}
+  note={Unpublished. Theoretical results valid; empirical performance insufficient for publication.},
+  howpublished={\url{https://github.com/sdk123132/HormonicFormer}}
 }
 ```
+
+### 相关讨论
+
+- **失败的价值**: [The Importance of Negative Results in Science](https://www.nature.com/articles/s41562-019-0569-3)
+- **物理启发AI**: [Physics-informed neural networks](https://en.wikipedia.org/wiki/Physics-informed_neural_networks)
+- **CGL方程**: [Complex Ginzburg-Landau equation](https://en.wikipedia.org/wiki/Complex_Ginzburg%E2%80%93Landau_equation)
 
 ## License
 
