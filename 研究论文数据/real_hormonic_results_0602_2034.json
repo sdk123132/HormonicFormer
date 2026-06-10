@@ -1,0 +1,128 @@
+{
+  "adding_problem": {
+    "S=50": {
+      "hormonic": {
+        "best_val_loss": 0.0034714224748313427,
+        "baseline_mse": 0.17388278245925903,
+        "relative_improvement": 98.00358469899416,
+        "params": 10893
+      },
+      "transformer": {
+        "best_val_loss": 0.00019737507682293653,
+        "baseline_mse": 0.17388278245925903,
+        "relative_improvement": 99.88648957991619,
+        "params": 105473
+      },
+      "lstm": {
+        "best_val_loss": 0.00013338201097212732,
+        "baseline_mse": 0.17388278245925903,
+        "relative_improvement": 99.9232919964325,
+        "params": 68865
+      }
+    },
+    "S=100": {
+      "hormonic": {
+        "best_val_loss": 0.06593145430088043,
+        "baseline_mse": 0.16336311399936676,
+        "relative_improvement": 59.64116214071679,
+        "params": 29093
+      },
+      "transformer": {
+        "best_val_loss": 0.0002448700834065676,
+        "baseline_mse": 0.16336311399936676,
+        "relative_improvement": 99.85010687087691,
+        "params": 108673
+      },
+      "lstm": {
+        "best_val_loss": 0.0002783486561384052,
+        "baseline_mse": 0.16336311399936676,
+        "relative_improvement": 99.82961352209564,
+        "params": 68865
+      }
+    },
+    "S=200": {
+      "hormonic": {
+        "best_val_loss": 0.15625159442424774,
+        "baseline_mse": 0.15961173176765442,
+        "relative_improvement": 2.1051944654657317,
+        "params": 95493
+      },
+      "transformer": {
+        "best_val_loss": 0.00016864496865309775,
+        "baseline_mse": 0.15961173176765442,
+        "relative_improvement": 99.89434049315462,
+        "params": 115073
+      },
+      "lstm": {
+        "best_val_loss": 0.00030793953919783235,
+        "baseline_mse": 0.15961173176765442,
+        "relative_improvement": 99.80706960836307,
+        "params": 68865
+      }
+    },
+    "S=500": {
+      "hormonic": {
+        "best_val_loss": 0.16402645409107208,
+        "baseline_mse": 0.1652650088071823,
+        "relative_improvement": 0.7494355429801036,
+        "params": 534693
+      },
+      "transformer": {
+        "best_val_loss": 0.00022439898748416454,
+        "baseline_mse": 0.1652650088071823,
+        "relative_improvement": 99.86421869390031,
+        "params": 134273
+      },
+      "lstm": {
+        "best_val_loss": 0.0005209343507885933,
+        "baseline_mse": 0.1652650088071823,
+        "relative_improvement": 99.6847884772775,
+        "params": 68865
+      }
+    }
+  },
+  "ett_prediction": {
+    "2d->12h": {
+      "hormonic": {
+        "best_val_loss": 0.13562381267547607,
+        "params": 11056
+      },
+      "transformer": {
+        "best_val_loss": 0.09094565361738205,
+        "params": 106028
+      },
+      "lstm": {
+        "best_val_loss": 0.08938148617744446,
+        "params": 69548
+      }
+    },
+    "4d->24h": {
+      "hormonic": {
+        "best_val_loss": 0.19261734187602997,
+        "params": 28348
+      },
+      "transformer": {
+        "best_val_loss": 0.07077732682228088,
+        "params": 109496
+      },
+      "lstm": {
+        "best_val_loss": 0.11966457217931747,
+        "params": 69944
+      }
+    },
+    "7d->48h": {
+      "hormonic": {
+        "best_val_loss": 0.09418626874685287,
+        "params": 71764
+      },
+      "transformer": {
+        "best_val_loss": 0.06433919817209244,
+        "params": 114896
+      },
+      "lstm": {
+        "best_val_loss": 0.13976514339447021,
+        "params": 70736
+      }
+    }
+  }
+}

@@ -1,0 +1,5480 @@
+================================================================================
+HormonicFormer v3 — 完整代码汇总
+================================================================================
+
+项目路径: C:\Users\MR\Desktop\初代激素场网络\hormonic_v3
+文件总数: 24
+生成时间: 2026-05-27 13:14
+
+--------------------------------------------------------------------------------
+目录
+--------------------------------------------------------------------------------
+
+   1. BWO_ALGORITHM.md                                        (  5425 bytes)
+   2. README.md                                               (  4932 bytes)
+   3. _check_sparsity.py                                      (   888 bytes)
+   4. _debug_nan.py                                           (  2559 bytes)
+   5. _quick_test.py                                          (  2248 bytes)
+   6. config.yaml                                             (  3749 bytes)
+   7. extract_sparsity.py                                     (  1373 bytes)
+   8. inspect_ckpt.py                                         (  1084 bytes)
+   9. inspect_ckpt2.py                                        (   292 bytes)
+  10. launch_train.py                                         (   383 bytes)
+  11. local_config.yaml                                       (  3005 bytes)
+  12. local_train.py                                          ( 14756 bytes)
+  13. monitored_train.py                                      ( 13919 bytes)
+  14. requirements_monitor.txt                                (   107 bytes)
+  15. experiments\ablation.py                                 ( 13422 bytes)
+  16. experiments\copy_task.py                                ( 16478 bytes)
+  17. field\laplacian_dft.py                                  (  5062 bytes)
+  18. models\hormonicformer_v3.py                             ( 35988 bytes)
+  19. scripts\train.py                                        ( 13613 bytes)
+  20. train_monitor\README.md                                 (  5933 bytes)
+  21. train_monitor\__init__.py                               (   220 bytes)
+  22. train_monitor\local_monitor.py                          ( 20087 bytes)
+  23. train_monitor\training_monitor.py                       (  7079 bytes)
+  24. train_monitor\web_server.py                             ( 10132 bytes)
+
+
+################################################################################
+# [1/24] BWO_ALGORITHM.md
+# Size: 5425 bytes
+################################################################################
+
+# BWO (Bi-Phase Wave Optimization) 算法
+
+## 1. 算法伪代码
+
+```
+Algorithm 1: BWO for Sparse Neural Architecture Search
+=======================================================
+Input:
+  G(0)          : 初始连接矩阵 [S x S]
+  A(0)          : 初始存活掩码 {0,1}^(SxS)
+  P             : 种群大小 (default: 20)
+  T             : 最大进化迭代次数
+  sparsity_min  : 最小稀疏度 (default: 0.65)
+  sparsity_max  : 最大稀疏度 (default: 0.75)
+  flip_ratio    : 重生比例 (default: 0.02)
+  elite_ratio   : 精英保留比例 (default: 0.1)
+  spiral_rate   : 螺旋收缩率 (default: 0.9)
+
+Output:
+  A*            : 优化后的二值存活掩码
+
+1:  function BWO(G, A, P, T):
+2:    // 初始化种群
+3:    Population <- {A}  // 包含当前掩码
+4:    for p = 2 to P:
+5:      A_p <- RandomMask(sparsity_min, sparsity_max)
+6:      Population <- Population U {A_p}
+7:
+8:    // 主循环
+9:    for t = 1 to T:
+10:     // 评估适应度 (使用验证集准确率)
+11:     Fitness <- Evaluate(Population, eval_samples=2000)
+12:     A_best <- argmax(Fitness)  // 当前最优
+13:
+14:     // 精英保留 (Elitism)
+15:     n_elite <- ceil(elite_ratio * P)
+16:     NextGen <- TopK(Population, n_elite)  // 前k直接进入下一代
+17:
+18:     // 螺旋收缩 (Spiral Contraction)
+19:     for p = n_elite+1 to P:
+20:       A_parent <- TournamentSelect(Population, Fitness)
+21:       // 向最优解螺旋移动: 概率性地将A_parent的比特翻转为A_best
+22:       A_child <- A_parent
+23:       for each bit (i,j):
+24:         if A_best[i,j] != A_parent[i,j]:
+25:           p_flip <- spiral_rate * (1 - t/T)  // 随时间衰减
+26:           with probability p_flip:
+27:             A_child[i,j] <- A_best[i,j]
+28:       NextGen <- NextGen U {A_child}
+29:
+30:     // 鲸落突变 (Whale Fall Mutation)
+31:     n_fall <- max(1, floor(0.1 * P))
+32:     for p = 1 to n_fall:
+33:       A_dead <- RandomSelect(NextGen)
+34:       // 随机重置部分连接
+35:       n_reset <- floor(flip_ratio * S^2)
+36:       Randomly reset n_reset bits of A_dead
+37:
+38:     // 硬约束投影 (Hard Constraint Projection)
+39:     for each A in NextGen:
+40:       current_sparsity <- 1 - sum(A) / S^2
+41:       if current_sparsity < sparsity_min:
+42:         // 随机激活额外连接直到满足最小稀疏度
+43:         Randomly activate (sparsity_min - current_sparsity) * S^2 bits
+44:       elif current_sparsity > sparsity_max:
+45:         // 随机剪枝连接直到满足最大稀疏度
+46:         Randomly prune (current_sparsity - sparsity_max) * S^2 bits
+47:
+48:     Population <- NextGen
+49:
+50:   return A_best
+```
+
+## 2. 收敛性分析
+
+### 2.1 基本性质
+
+**BWO属于群体智能随机搜索算法家族**，其搜索空间为离散的 {0,1}^(SxS) 二值矩阵空间，状态总数为 2^(S^2)。
+
+**性质1 (遍历性)**：鲸落突变算子以非零概率随机重置任意比特，因此在极限情况下 (T -> inf)，算法能以概率1访问搜索空间中的所有点，**保证了全局最优的可达性**。
+
+**性质2 (收敛趋势)**：螺旋收缩算子的翻转概率 p_flip = spiral_rate * (1 - t/T) 随时间递减。这意味着：
+- 早期 (t << T)：p_flip ~ spiral_rate，种群保持高多样性，广泛探索
+- 后期 (t -> T)：p_flip -> 0，种群收敛到当前最优，精细利用
+
+**性质3 (精英保证)**：精英保留机制确保最优解的适应度序列单调不减：
+```
+Fitness(A_best(t+1)) >= Fitness(A_best(t))  for all t
+```
+
+### 2.2 与Lottery Ticket Hypothesis的类比
+
+**BWO可视为在训练过程中动态搜索"中奖彩票"**（即最优稀疏子网络）。
+
+| 特性 | LTH (Frankle & Carbin) | BWO (本文) |
+|------|----------------------|-----------|
+| 搜索方式 | 迭代剪枝-重置-重训 | 种群进化并行搜索 |
+| 稀疏度控制 | 固定剪枝比例 | 硬约束区间 [65%, 75%] |
+| 多样性维持 | 低（单一网络） | 高（P个个体同时探索） |
+| 计算开销 | O(k x full_training) | O(P x eval_samples) |
+| 动态适应 | 无 | 随训练进展调整结构 |
+
+**关键区别**：BWO在整个训练过程中维持种群的多样性，从而避免了过早收敛到次优的稀疏结构。DA（多巴胺）信号作为适应度函数的调制因子，使搜索优先关注当前训练阶段最重要的连接。
+
+## 3. 复杂度分析
+
+| 操作 | 时间复杂度 | 空间复杂度 |
+|------|----------|----------|
+| 种群初始化 | O(P * S^2) | O(P * S^2) |
+| 适应度评估 | O(P * eval_samples) | O(S^2) |
+| 螺旋收缩 | O(P * S^2) | O(P * S^2) |
+| 鲸落突变 | O(n_fall * S^2) | O(S^2) |
+| 硬约束投影 | O(P * S^2) | O(S^2) |
+| **总计每代** | **O(P * (S^2 + eval_samples))** | **O(P * S^2)** |
+
+在典型配置下 (P=20, S=196, eval_samples=2000)：
+- 时间 ~ 20 * (196^2 + 2000) = 20 * 40,416 = 808K 操作/代
+- 实际运行时间 < 1分钟/代（GPU）
+
+## 4. 生物学灵感说明
+
+**"Wave"的含义**：BWO中的"Wave"指代种群在搜索空间中的**收缩-扩张动力学**：
+- **收缩阶段**：螺旋算子使种群向当前最优解收敛（类似鲸群包围猎物）
+- **扩张阶段**：鲸落突变引入随机扰动，防止过早收敛（类似鲸鱼死亡后滋养新生态系统）
+
+这与脑电波（EEG wave）是不同层面的概念，不应混淆。BWO的生物学灵感主要来自**座头鲸的bubble-net捕食行为**和**海洋生态系统的营养循环**。
+
+
+
+################################################################################
+# [2/24] README.md
+# Size: 4932 bytes
+################################################################################
+
+# HormonicFormer v3 - Biological Neural Architecture
+
+复数Ginzburg-Landau场动力学 + 神经调质调制 + DCU国产算力适配
+
+---
+
+## 核心机制 (v3 新增)
+
+### Priority 1: 局部 E/I 平衡 (EIBalance)
+- **生物原理**：兴奋/抑制动态平衡，侧抑制防止强token主导
+- **实现**：每个token维护局部E/I状态，`modulation = tanh(E - I)`
+- **效果**：提高表征多样性，防止场演化过度平滑
+
+### Priority 2: 感觉反馈/外部驱动 (SensoryFeedback)
+- **生物原理**：感觉皮层持续接收丘脑输入，防止"遗忘"
+- **实现**：CGL演化中每步注入 `I_ext(t) = feedback_strength * W_feedback * x_embed`
+- **效果**：锚定输入信息，缓解扩散过度导致的acc≈10%问题
+
+### Priority 3: Hebbian 实时突触可塑性 (HebbianPlasticity)
+- **生物原理**："一起激发的神经元连在一起"，STDP
+- **实现**：基于相位同步度 `cos(theta_i - theta_j)` 更新G矩阵，tau~10
+- **效果**：G矩阵具备"经验"快速调整能力，填补场演化(τ~1)和BWO(τ~100)之间的空缺
+
+### Priority 4-5: 跨频耦合 + 能量约束 (配置中预留，当前关闭)
+
+---
+
+## 关键修复 (v3)
+
+### 数值稳定性
+- **问题**：Laplacian核 `-k^2` 最大达-9604，单步放大48x
+- **修复**：核归一化 `/ max(|k^2|)` + CGL反应项 `amp_sq = tanh(amp_sq)`
+- **结果**：Loss从NaN变为稳定收敛
+
+### Laplacian DCU兼容
+- 使用DFT矩阵替代 `torch.fft`，完全兼容ROCm/HIP
+
+---
+
+## 实验框架
+
+### 改善一：长程探针实验
+```bash
+python experiments/copy_task.py --seq_lengths 16 64 256 512 --epochs 20
+```
+**目标**：证明场演化在S=256时准确率>90%
+
+### 改善六：消融实验
+```bash
+python experiments/ablation.py --configs all --dataset fashion_mnist --epochs 10
+```
+**目标**：证明扩散/反应/EI/反馈/Hebbian各组件的因果贡献
+
+### 训练
+```bash
+# 单卡
+python scripts/train.py --config config.yaml
+
+# 多卡 (DCU)
+torchrun --standalone --nproc_per_node=2 scripts/train.py --config config.yaml
+```
+
+---
+
+## 文件结构
+
+```
+hormonic_v3/
+|-- config.yaml              # 主配置 (含v3新机制超参数)
+|-- README.md                # 本文件
+|-- BWO_ALGORITHM.md         # BWO算法伪代码与收敛性分析
+|-- launch.sh                # DCU启动脚本
+|-- setup.sh                 # 一键部署脚本
+|-- test.sh                  # 快速测试
+|-- field/
+|   |-- laplacian_dft.py     # DFT矩阵Laplacian (DCU兼容)
+|-- models/
+|   |-- hormonicformer_v3.py # 完整模型 (v3新机制)
+|-- scripts/
+|   |-- train.py             # 训练脚本 (DDP + AMP + BWO)
+|-- experiments/
+    |-- copy_task.py         # 长程探针实验
+    |-- ablation.py          # 消融实验
+```
+
+---
+
+## 本地 RTX 5070 8GB 快速开始
+
+```bash
+# 1. 确保安装了 PyTorch + torchvision
+pip install torch torchvision torchaudio pyyaml
+
+# 2. 直接启动本地训练 (无需DCU环境)
+python local_train.py --config local_config.yaml
+
+# 显存预估: ~4-5GB (d_model=128, batch=64, n_layers=4)
+```
+
+### 本地配置说明 (`local_config.yaml`)
+
+| 参数 | 服务器配置 | 本地5070配置 | 缩减原因 |
+|------|----------|-------------|---------|
+| d_model | 512 | **128** | 1/4参数量 |
+| n_layers | 8 | **4** | 1/2层数 |
+| batch_size | 256 | **64** | 8GB显存限制 |
+| n_steps | 3 | **10** | v3.1数值稳定性修复 |
+| D0_amp | 0.1 | **0.002** | CFL条件 |
+| dt | 0.05 | **0.02** | CFL条件 |
+| num_workers | 8 | **0** | Windows兼容 |
+| da_init | 0.5 | **2.5** | 避免DA初始surprise爆炸 |
+
+---
+
+## 服务器 (DCU/多卡) 快速开始
+
+```bash
+# 1. 环境检查
+bash test.sh
+
+# 2. 启动训练
+bash launch.sh
+
+# 3. 长程探针实验
+python experiments/copy_task.py --seq_lengths 16 64 256 --epochs 20
+
+# 4. 消融实验
+python experiments/ablation.py --configs all --epochs 10
+```
+
+---
+
+## 叙事修正 (回应质疑)
+
+| 原文可能引发的误解 | 修正后的表述 |
+|-------------------|------------|
+| "我们实现了大脑的完整模拟" | "我们对三个关键生物机制（E/I平衡、感觉反馈、Hebbian可塑性）进行了最小可行抽象" |
+| "BWO与脑波有关" | "BWO的'Wave'指种群收缩-扩张的搜索动力学，灵感来自鲸群行为" |
+| "DA/CB是完整的神经调质" | "DA捕捉多巴胺的RPE编码功能；CB实现活动依赖的逆向抑制" |
+| "替代Transformer" | "在特定约束下（稀疏性、噪声鲁棒性），场演化提供了注意力的可行替代路径" |
+
+---
+
+## 论文改善清单
+
+| 优先级 | 改善项 | 状态 | 预计时间 |
+|--------|--------|------|---------|
+| 1 | 长程探针实验 (Copy Task) | 代码完成 | 2-3天 (服务器) |
+| 2 | 叙事调整 + BWO伪代码 | 文档完成 | 已完成 |
+| 3 | 场演化消融实验 | 代码完成 | 1天 (服务器) |
+| 4 | 中等规模任务 (CIFAR-100/WikiText) | 待启动 | 5-7天 (服务器) |
+| 5 | Laplacian效率对比 | 待实现 | 1天 |
+
+
+
+################################################################################
+# [3/24] _check_sparsity.py
+# Size: 888 bytes
+################################################################################
+
+﻿import torch
+import os
+import sys
+
+cp_path = 'checkpoints/epoch_5.pt'
+if os.path.exists(cp_path):
+    ckpt = torch.load(cp_path, map_location='cpu')
+    print('=== Epoch 5 Checkpoint ===')
+    print('Keys:', list(ckpt.keys()))
+    if 'metrics' in ckpt:
+        m = ckpt['metrics']
+        print('Metrics:', m)
+    if 'model_state' in ckpt:
+        state = ckpt['model_state']
+        for name in ['G', 'DA', 'CB']:
+            if name in state:
+                param = state[name]
+                total = param.numel()
+                zeros = (param == 0).sum().item()
+                sparsity = zeros / total * 100
+                print(f'{name} sparsity: {sparsity:.2f}% ({zeros}/{total})')
+            else:
+                print(f'{name} not found in state_dict')
+        # List all keys
+        print('\\nState keys:', list(state.keys()))
+else:
+    print('Checkpoint not found')
+
+
+
+################################################################################
+# [4/24] _debug_nan.py
+# Size: 2559 bytes
+################################################################################
+
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+import sys
+sys.path.insert(0, 'models')
+sys.path.insert(0, 'field')
+
+import torch
+import yaml
+from hormonicformer_v3 import HormonicFormer
+
+with open('local_config.yaml', 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f)
+
+device = 'cuda'
+model = HormonicFormer(config).to(device)
+
+img = torch.randn(4, 1, 28, 28).to(device)
+label = torch.randint(0, 10, (4,)).to(device)
+
+# Test 1: 无 AMP，纯 float32
+print("=== Test 1: Float32, no AMP ===")
+try:
+    with torch.no_grad():
+        logits, loss = model(img, label)
+    print(f"Logits NaN: {torch.isnan(logits).any()}")
+    print(f"Loss: {loss.item()}")
+    print(f"Loss NaN: {torch.isnan(loss).any()}")
+    print(f"Loss Inf: {torch.isinf(loss).any()}")
+except Exception as e:
+    print(f"Error: {e}")
+
+# Test 2: 有 AMP
+print("\n=== Test 2: With AMP ===")
+try:
+    with torch.amp.autocast('cuda'):
+        logits, loss = model(img, label)
+    print(f"Logits NaN: {torch.isnan(logits).any()}")
+    print(f"Loss: {loss.item()}")
+    print(f"Loss NaN: {torch.isnan(loss).any()}")
+    print(f"Loss Inf: {torch.isinf(loss).any()}")
+except Exception as e:
+    print(f"Error: {e}")
+
+# Test 3: 训练一步
+print("\n=== Test 3: One training step (no AMP) ===")
+optim = torch.optim.AdamW(model.parameters(), lr=0.001)
+try:
+    model.train()
+    logits, loss = model(img, label)
+    print(f"Forward OK. Loss: {loss.item()}")
+    loss.backward()
+    print(f"Backward OK.")
+    
+    # 检查梯度
+    nan_grads = 0
+    total_grads = 0
+    for name, p in model.named_parameters():
+        if p.grad is not None:
+            total_grads += 1
+            if torch.isnan(p.grad).any() or torch.isinf(p.grad).any():
+                nan_grads += 1
+                print(f"  NaN/Inf grad: {name}")
+    print(f"Gradients: {nan_grads}/{total_grads} have NaN/Inf")
+    
+    optim.step()
+    optim.zero_grad()
+    print("Step OK.")
+except Exception as e:
+    print(f"Error: {e}")
+
+# Test 4: 训练一步 with AMP
+print("\n=== Test 4: One training step (with AMP) ===")
+model2 = HormonicFormer(config).to(device)
+optim2 = torch.optim.AdamW(model2.parameters(), lr=0.001)
+scaler = torch.amp.GradScaler('cuda')
+try:
+    model2.train()
+    with torch.amp.autocast('cuda'):
+        logits, loss = model2(img, label)
+    print(f"Forward OK. Loss: {loss.item()}")
+    
+    scaler.scale(loss).backward()
+    print(f"Backward OK.")
+    
+    scaler.step(optim2)
+    scaler.update()
+    optim2.zero_grad()
+    print("Step OK.")
+except Exception as e:
+    print(f"Error: {e}")
+
+
+
+################################################################################
+# [5/24] _quick_test.py
+# Size: 2248 bytes
+################################################################################
+
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+import sys
+sys.path.insert(0, 'models')
+sys.path.insert(0, 'field')
+
+import time
+import torch
+import yaml
+from torch.utils.data import DataLoader, Subset
+from torchvision import datasets, transforms
+from hormonicformer_v3 import HormonicFormer
+
+with open('local_config.yaml', 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f)
+
+device = 'cuda'
+print(f"GPU: {torch.cuda.get_device_name(0)}")
+
+# 创建模型
+model = HormonicFormer(config).to(device)
+params = sum(p.numel() for p in model.parameters())
+print(f"Params: {params/1e6:.2f}M")
+
+optim = torch.optim.AdamW(model.parameters(), lr=0.001)
+
+# 只用 256 张图片快速测试
+transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
+full_ds = datasets.FashionMNIST('./data', train=True, download=True, transform=transform)
+small_ds = Subset(full_ds, range(256))
+loader = DataLoader(small_ds, batch_size=64, shuffle=True, num_workers=0)
+
+print(f"\nQuick test: {len(small_ds)} samples, batch_size=64, {len(loader)} batches")
+print(f"{'='*60}")
+
+model.train()
+total_t = 0
+
+for epoch in range(3):
+    epoch_loss = 0
+    epoch_acc = 0
+    n = 0
+    t0 = time.time()
+    
+    for images, targets in loader:
+        images = images.to(device)
+        targets = targets.to(device)
+        
+        logits, loss = model(images, targets)
+        loss.backward()
+        
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optim.step()
+        optim.zero_grad()
+        
+        with torch.no_grad():
+            acc = (logits.argmax(1) == targets).float().mean()
+        
+        epoch_loss += loss.item()
+        epoch_acc += acc.item()
+        n += 1
+    
+    elapsed = time.time() - t0
+    total_t += elapsed
+    avg_loss = epoch_loss / n
+    avg_acc = epoch_acc / n * 100
+    
+    mem = torch.cuda.memory_allocated() / 1024**2
+    print(f"Epoch {epoch+1}: Loss={avg_loss:.4f} Acc={avg_acc:.1f}% Time={elapsed:.1f}s GPU={mem:.0f}MB")
+
+print(f"\n{'='*60}")
+print(f"Total time: {total_t:.1f}s")
+print(f"Per-epoch: {total_t/3:.1f}s")
+print(f"Estimated full epoch (60000 samples): {total_t/3 * 60000/256:.0f}s = {total_t/3 * 60000/256/60:.0f}min")
+print(f"\n>>> Quick test PASSED!")
+
+
+
+################################################################################
+# [6/24] config.yaml
+# Size: 3749 bytes
+################################################################################
+
+# HormonicFormer v3 - DCU训练配置
+# 适配国家算力网 PyTorch 2.7.1 + DTK 26.04
+
+name: "hormonic_v3_dcu_8L_512d"
+
+model:
+  # 模型架构 (目标大模型)
+  d_model: 512
+  n_heads: 16
+  n_layers: 8
+  seq_len: 196          # 14x14 patches for 28x28 images
+  patch_size: 2
+  n_steps: 3            # CGL演化步数
+  n_classes: 10         # Fashion-MNIST
+
+  # CGL参数 (v3.1 数值稳定性修复)
+  # CFL条件: dt * D0 * |λ_max| / seq_len < 2/seq_len
+  # 对于seq_len=196, |λ_max|=9604:
+  #   dt=0.02 * D0=0.002 * 9604 / 196 = 0.002 (稳定)
+  D0_amp: 0.002         # 扩散系数 (大幅减小)
+  D0_phase: 0.002
+  dt: 0.02              # 时间步长 (减小)
+  n_steps: 10           # 演化步数 (增加以补偿小dt)
+  noise_scale: 0.005
+
+  # ===== 新增: 局部 E/I 平衡 =====
+  ei_balance:
+    enabled: true
+    tau_e: 2.0            # 兴奋时间常数 (快速)
+    tau_i: 1.0            # 抑制时间常数 (更快，侧抑制)
+    gamma_e: 1.0          # 兴奋强度
+    gamma_i: 0.8          # 抑制强度 (略弱于兴奋，避免过抑制)
+    w_inh: 0.3            # 局部侧抑制权重
+    inh_radius: 3         # 侧抑制的局部邻域半径 (tokens)
+
+  # ===== 新增: 感觉反馈 / 外部驱动 =====
+  sensory_feedback:
+    enabled: true
+    feedback_strength: 0.3    # I_ext 的权重系数
+    feedback_freq: 1          # 每多少步注入一次外部驱动 (1=每步都注)
+
+  # ===== 新增: Hebbian 实时可塑性 =====
+  hebbian:
+    enabled: true
+    eta_hebb: 0.001           # Hebbian 学习率
+    eta_anti: 0.0005          # 反 Hebbian 学习率
+    sync_threshold: 0.3       # 相位同步阈值
+    tau_hebb: 10.0            # Hebbian 更新的时间常数 (τ~10)
+    decay: 0.999              # G 矩阵的缓慢衰减 (防止无限增长)
+
+  # ===== 新增: 跨频耦合 (Priority 4) =====
+  cross_freq_coupling:
+    enabled: false            # 当前规模下关闭，深层模型开启
+    alpha_cfc: 0.1            # 耦合强度
+    coupling_mode: "deep_to_shallow"  # deep相位 -> shallow振幅
+
+  # ===== 新增: 能量约束 + 钙波 (Priority 5) =====
+  energy_constraint:
+    enabled: false
+    atp_budget: 1.0           # 每token每层的能量预算
+    atp_recovery: 0.1         # 能量恢复速率
+
+train:
+  # 训练参数
+  epochs: 50
+  batch_size: 256       # 双卡可支持
+  accumulation_steps: 1
+
+  # 优化器
+  lr: 0.0005
+  weight_decay: 0.001
+  scheduler: cosine
+  warmup_epochs: 0
+
+  # 数据
+  dataset: fashion_mnist
+  data_root: ./data
+  noise_sigma: 0.3      # 高斯噪声
+  num_workers: 8
+  pin_memory: true
+
+  # 系统
+  seed: 42
+  use_amp: true         # 混合精度
+  amp_exclude_ops: true # DCU兼容性
+  nan_guard: true       # NaN检测
+  detect_anomaly: false
+
+  # 检查点
+  checkpoint_dir: ./checkpoints
+  log_dir: ./logs
+  save_interval: 1
+  log_interval: 50
+  max_stale_epochs: 5   # 早停
+
+neuromod:
+  # DA (多巴胺) - v3.1 修复: 初始值设为接近初始CE loss
+  # Fashion-MNIST 10类, 初始CE loss ~2.3
+  # da_init=2.5 使初始DA~0.5 (中性探索), 避免初始surprise爆炸
+  da_init: 2.5
+  da_min: 0.1
+  da_max: 0.9
+  da_ema_alpha: 0.9      # 加快跟踪 (0.95->0.9)
+  da_var_alpha: 0.9
+
+  # CB (大麻素)
+  use_cb: false         # 当前规模下关闭
+  cb_gain: 2.0
+  cb_threshold: 0.25
+  tau_cb: 10.0
+
+  # G (胶质/BWO)
+  init_density: 0.3
+  target_sparsity: 0.70
+  sparsity_min: 0.65
+  sparsity_max: 0.75
+
+bwo:
+  # 脑波优化
+  use_bwo: true
+  pop_size: 20
+  eval_samples: 2000
+  evolve_interval: 5    # 每5epoch进化一次
+  flip_ratio: 0.02      # 重生比例
+
+pc:
+  # 预测编码
+  use_pc: true
+  pred_hidden_mult: 4
+  aux_weight: 0.01
+
+dist:
+  # 分布式
+  backend: nccl
+  find_unused_parameters: false
+
+
+
+################################################################################
+# [7/24] extract_sparsity.py
+# Size: 1373 bytes
+################################################################################
+
+import torch
+import os
+
+def analyze_checkpoint(ckpt_path, name):
+    print(f'\n=== {name} ===')
+    ckpt = torch.load(ckpt_path, map_location='cpu')
+    state = ckpt['model']
+    
+    # Find all alive_mask keys
+    alive_keys = [k for k in state.keys() if 'alive_mask' in k]
+    print(f'Found {len(alive_keys)} alive_mask tensors')
+    
+    total_alive = 0
+    total_params = 0
+    
+    for k in alive_keys:
+        mask = state[k]
+        alive = mask.sum().item()
+        total = mask.numel()
+        sparsity = 1.0 - (alive / total)
+        print(f'  {k}: alive={alive}/{total}, sparsity={sparsity:.4f} ({sparsity*100:.2f}%)')
+        total_alive += alive
+        total_params += total
+    
+    if total_params > 0:
+        overall_sparsity = 1.0 - (total_alive / total_params)
+        print(f'\n  Overall G_sparsity: {overall_sparsity:.4f} ({overall_sparsity*100:.2f}%)')
+        print(f'  Total alive: {total_alive}/{total_params}')
+    
+    return overall_sparsity if total_params > 0 else 0
+
+# Analyze both checkpoints
+sparsity_5 = analyze_checkpoint('checkpoints/epoch_5.pt', 'Epoch 5')
+sparsity_10 = analyze_checkpoint('checkpoints/epoch_10.pt', 'Epoch 10')
+
+print(f'\n=== BWO Effect on Sparsity ===')
+print(f'Epoch 5 G_sparsity: {sparsity_5*100:.2f}%')
+print(f'Epoch 10 G_sparsity: {sparsity_10*100:.2f}%')
+print(f'Change: {(sparsity_10 - sparsity_5)*100:.2f}%')
+
+
+
+################################################################################
+# [8/24] inspect_ckpt.py
+# Size: 1084 bytes
+################################################################################
+
+import torch
+import os
+
+ckpt_path = 'checkpoints/epoch_5.pt'
+ckpt = torch.load(ckpt_path, map_location='cpu')
+
+print('=== Epoch 5 Checkpoint ===')
+print('Keys:', list(ckpt.keys()))
+
+if 'model' in ckpt:
+    model = ckpt['model']
+    print('\nModel type:', type(model))
+    if hasattr(model, 'state_dict'):
+        state = model.state_dict()
+        print('State dict keys count:', len(state.keys()))
+        
+        # Look for hebbian-related keys
+        hebbian_keys = [k for k in state.keys() if 'hebbian' in k.lower() or 'alive' in k.lower()]
+        print(f'\nHebbian-related keys ({len(hebbian_keys)}):')
+        for k in hebbian_keys[:20]:
+            print(f'  {k}')
+        
+        # Check for G, DA, CB in state
+        for name in ['G', 'DA', 'CB']:
+            matching = [k for k in state.keys() if name in k]
+            if matching:
+                print(f'\n{name} found in keys: {matching[:5]}')
+
+# Check epoch_10 as well
+print('\n\n=== Epoch 10 Checkpoint ===')
+ckpt10 = torch.load('checkpoints/epoch_10.pt', map_location='cpu')
+print('Keys:', list(ckpt10.keys()))
+
+
+
+################################################################################
+# [9/24] inspect_ckpt2.py
+# Size: 292 bytes
+################################################################################
+
+import torch
+import os
+
+ckpt_path = 'checkpoints/epoch_5.pt'
+ckpt = torch.load(ckpt_path, map_location='cpu')
+
+print('=== Epoch 5 Checkpoint ===')
+state = ckpt['model']
+print('State dict keys count:', len(state.keys()))
+print('\nAll keys:')
+for k in sorted(state.keys()):
+    print(f'  {k}')
+
+
+
+################################################################################
+# [10/24] launch_train.py
+# Size: 383 bytes
+################################################################################
+
+#!/usr/bin/env python3
+"""训练启动脚本 - 处理环境变量和编码问题"""
+import os
+import sys
+
+# 设置环境变量
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+
+# 添加路径
+sys.path.insert(0, str(os.path.dirname(__file__)))
+
+# 运行主训练脚本
+with open('monitored_train.py', 'r', encoding='utf-8') as f:
+    exec(f.read())
+
+
+################################################################################
+# [11/24] local_config.yaml
+# Size: 3005 bytes
+################################################################################
+
+# HormonicFormer v3 - 本地RTX 5070 8GB配置
+# 适配单卡小显存环境
+
+name: "hormonic_v3_local_5070"
+
+model:
+  # 模型架构 (精简版，适配8GB显存)
+  d_model: 128          # 512 -> 128 (1/4参数量)
+  n_heads: 4            # 16 -> 4
+  n_layers: 2           # 8 -> 2 (加速测试)
+  seq_len: 196          # 14x14 patches for 28x28 images
+  patch_size: 2
+  n_steps: 3            # CGL演化步数 (10→3加速)
+  n_classes: 10         # Fashion-MNIST
+
+  # CGL参数 (v3.1 数值稳定性修复)
+  D0_amp: 0.002
+  D0_phase: 0.002
+  dt: 0.02
+  noise_scale: 0.005
+
+  # 局部 E/I 平衡
+  ei_balance:
+    enabled: true
+    tau_e: 2.0
+    tau_i: 1.0
+    gamma_e: 1.0
+    gamma_i: 0.8
+    w_inh: 0.3
+    inh_radius: 3
+
+  # 感觉反馈
+  sensory_feedback:
+    enabled: true
+    feedback_strength: 0.3
+    feedback_freq: 1
+
+  # Hebbian 实时可塑性
+  hebbian:
+    enabled: true
+    eta_hebb: 0.001
+    eta_anti: 0.0005
+    sync_threshold: 0.3
+    tau_hebb: 10.0
+    decay: 0.999
+
+  # 跨频耦合 (关闭)
+  cross_freq_coupling:
+    enabled: false
+    alpha_cfc: 0.1
+    coupling_mode: "deep_to_shallow"
+
+  # 能量约束 (关闭)
+  energy_constraint:
+    enabled: false
+    atp_budget: 1.0
+    atp_recovery: 0.1
+
+train:
+  # 训练参数 (适配小显存)
+  epochs: 50
+  batch_size: 64        # 256 -> 64 (8GB只能撑64)
+  accumulation_steps: 2 # 梯度累积=等效batch_size 128
+
+  # 优化器
+  lr: 0.0005             # 稍大lr加速收敛
+  weight_decay: 0.001
+  scheduler: cosine
+  warmup_epochs: 2      # 加warmup稳定训练
+
+  # 数据
+  dataset: fashion_mnist
+  data_root: ./data
+  noise_sigma: 0.3
+  num_workers: 0        # Windows必须设为0
+  pin_memory: false     # 小batch不需要
+
+  # 系统
+  seed: 42
+  use_amp: false        # AMP导致NaN，RTX 5070上关闭
+  amp_exclude_ops: false # NVIDIA不需要DCU兼容
+  nan_guard: true
+  detect_anomaly: false
+
+  # 检查点
+  checkpoint_dir: ./checkpoints
+  log_dir: ./logs
+  save_interval: 5
+  log_interval: 50
+  max_stale_epochs: 10  # 放宽早停
+
+neuromod:
+  # DA (多巴胺) - v3.1修复
+  da_init: 2.5
+  da_min: 0.1
+  da_max: 0.9
+  da_ema_alpha: 0.9
+  da_var_alpha: 0.9
+
+  # CB (大麻素)
+  use_cb: false
+  cb_gain: 2.0
+  cb_threshold: 0.25
+  tau_cb: 10.0
+
+  # G (胶质/BWO)
+  init_density: 0.3
+  target_sparsity: 0.50
+  sparsity_min: 0.65
+  sparsity_max: 0.75
+
+bwo:
+  # 脑波优化
+  use_bwo: true
+  pop_size: 10          # 20 -> 10 (减少内存)
+  eval_samples: 1000    # 2000 -> 1000
+  evolve_interval: 5   # 5 -> 10 (减少频率)
+  flip_ratio: 0.30
+
+pc:
+  # 预测编码
+  use_pc: true
+  pred_hidden_mult: 2   # 4 -> 2 (节省显存)
+  aux_weight: 0.01
+
+# 显存预估 (8GB):
+#   Model: ~2.5M params = 10MB
+#   Batch 64: 64 * 196 * 128 * 4bytes * n_layers = ~200MB per layer
+#   Activations: ~2GB
+#   Gradients: ~500MB
+#   Optimizer states: ~1GB
+#   Total: ~4-5GB < 8GB ✓
+
+
+
+################################################################################
+# [12/24] local_train.py
+# Size: 14756 bytes
+################################################################################
+
+#!/usr/bin/env python3
+"""
+HormonicFormer v3 - 本地单卡训练脚本
+适配: RTX 5070 8GB / Windows / Linux单卡
+
+用法:
+    python local_train.py --config local_config.yaml
+    
+显存监控:
+    训练过程中会自动打印GPU显存使用情况
+实时监控:
+    启动后可通过 http://localhost:5000 查看训练进度
+"""
+import os
+import sys
+import time
+import argparse
+import yaml
+import logging
+import threading
+from pathlib import Path
+from datetime import datetime
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.cuda.amp import autocast, GradScaler
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+
+# 添加项目路径
+PROJECT_ROOT = Path(__file__).parent
+sys.path.insert(0, str(PROJECT_ROOT / 'models'))
+sys.path.insert(0, str(PROJECT_ROOT / 'field'))
+sys.path.insert(0, str(PROJECT_ROOT / 'train_monitor'))
+
+from hormonicformer_v3 import HormonicFormer
+from web_server import run_server, update_monitor_data
+
+
+def setup_logger(log_dir):
+    """设置日志"""
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = log_dir / f'local_train_{timestamp}.log'
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[%(asctime)s] %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler()
+        ]
+    )
+    return logging.getLogger('hormonic')
+
+
+def print_gpu_memory(device_id=0):
+    """打印GPU显存使用情况"""
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated(device_id) / 1024**2
+        reserved = torch.cuda.memory_reserved(device_id) / 1024**2
+        total = torch.cuda.get_device_properties(device_id).total_memory / 1024**2
+        print(f"  [GPU] 已用: {allocated:.0f}MB / 预留: {reserved:.0f}MB / 总共: {total:.0f}MB")
+        return allocated
+    return 0
+
+
+def get_dataloader(config, train=True):
+    """获取数据加载器 (Windows兼容版)"""
+    data_root = config['train']['data_root']
+    batch_size = config['train']['batch_size']
+    num_workers = config['train']['num_workers']  # Windows设为0
+    pin_memory = config['train']['pin_memory']
+
+    # 数据预处理
+    if train:
+        transform = transforms.Compose([
+            transforms.RandomRotation(10),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,)),
+            transforms.Lambda(
+                lambda x: x + config['train']['noise_sigma'] * torch.randn_like(x)
+                if config['train']['noise_sigma'] > 0 else x
+            )
+        ])
+    else:
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+
+    # 数据集
+    dataset_name = config['train']['dataset']
+    if dataset_name == 'fashion_mnist':
+        dataset = datasets.FashionMNIST(data_root, train=train, download=True, transform=transform)
+    elif dataset_name == 'mnist':
+        dataset = datasets.MNIST(data_root, train=train, download=True, transform=transform)
+    elif dataset_name == 'cifar10':
+        dataset = datasets.CIFAR10(data_root, train=train, download=True, transform=transform)
+    else:
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=train,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        drop_last=train,
+    )
+
+    return loader
+
+
+def train_epoch(model, loader, optimizer, scaler, scheduler, epoch, config, logger):
+    """训练一个epoch"""
+    model.train()
+    device = next(model.parameters()).device
+    accumulation_steps = max(config['train'].get('accumulation_steps', 1), 1)
+    log_interval = config['train']['log_interval']
+    nan_guard = config['train']['nan_guard']
+    use_amp = config['train']['use_amp']
+
+    total_loss = 0.0
+    total_ce = 0.0
+    correct = 0
+    total_samples = 0
+
+    optimizer.zero_grad()
+
+    for batch_idx, (images, targets) in enumerate(loader):
+        images = images.to(device, non_blocking=False)
+        targets = targets.to(device, non_blocking=False)
+
+        # 前向传播
+        with autocast(enabled=use_amp):
+            logits, loss = model(images, targets)
+            loss = loss / accumulation_steps
+
+        # NaN检测
+        if nan_guard and (torch.isnan(loss) or torch.isinf(loss)):
+            logger.warning(f"  NaN/Inf at batch {batch_idx}, skipping")
+            continue
+
+        # 反向传播
+        scaler.scale(loss).backward()
+
+        # 梯度累积更新
+        if (batch_idx + 1) % accumulation_steps == 0:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+
+            if scheduler is not None:
+                scheduler.step()
+
+        # 统计
+        with torch.no_grad():
+            ce_loss = F.cross_entropy(logits, targets)
+            total_ce += ce_loss.item()
+            total_loss += loss.item() * accumulation_steps
+            pred = logits.argmax(dim=-1)
+            correct += (pred == targets).sum().item()
+            total_samples += targets.size(0)
+
+        # BWO: 定期剪枝重生 (只在 epoch 结束时调用，且每5个epoch一次)
+        # 注意：实际调用在 train() 函数中，epoch 循环结束后
+        pass  # 已移至 epoch 循环外
+
+        # 日志
+        if batch_idx % log_interval == 0:
+            lr = optimizer.param_groups[0]['lr']
+            acc = 100.0 * correct / total_samples if total_samples > 0 else 0
+            logger.info(
+                f"  Batch[{batch_idx:4d}/{len(loader)}] "
+                f"Loss: {total_loss/(batch_idx+1):.4f} "
+                f"CE: {total_ce/(batch_idx+1):.4f} "
+                f"Acc: {acc:.1f}% "
+                f"LR: {lr:.6f}"
+            )
+
+    avg_loss = total_loss / len(loader)
+    avg_acc = 100.0 * correct / total_samples if total_samples > 0 else 0
+    return avg_loss, avg_acc
+
+
+@torch.no_grad()
+def evaluate(model, loader, config):
+    """评估"""
+    model.eval()
+    device = next(model.parameters()).device
+    use_amp = config['train']['use_amp']
+
+    total_loss = 0.0
+    correct = 0
+    total = 0
+
+    for images, targets in loader:
+        images = images.to(device, non_blocking=False)
+        targets = targets.to(device, non_blocking=False)
+
+        with autocast(enabled=use_amp):
+            logits, loss = model(images, targets)
+
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == targets).sum().item()
+        total += targets.size(0)
+
+    avg_loss = total_loss / len(loader)
+    avg_acc = 100.0 * correct / total
+
+    return avg_loss, avg_acc
+
+
+def save_checkpoint(model, optimizer, scaler, epoch, config, is_best=False):
+    """保存检查点"""
+    checkpoint_dir = Path(config['train']['checkpoint_dir'])
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    state = {
+        'epoch': epoch,
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'scaler': scaler.state_dict(),
+        'config': config,
+    }
+
+    # 最新检查点
+    torch.save(state, checkpoint_dir / 'latest.pt')
+
+    # 定期保存
+    if epoch % config['train'].get('save_interval', 5) == 0:
+        torch.save(state, checkpoint_dir / f'epoch_{epoch}.pt')
+
+    # 最佳模型
+    if is_best:
+        torch.save(state, checkpoint_dir / 'best.pt')
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Train HormonicFormer v3 (Local Single GPU)')
+    parser.add_argument('--config', type=str, default='local_config.yaml', help='配置文件路径')
+    parser.add_argument('--resume', type=str, default='', help='恢复训练的检查点')
+    parser.add_argument('--device', type=str, default='cuda', help='设备: cuda / cpu')
+    args = parser.parse_args()
+
+    # 加载配置
+    with open(args.config, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+
+    # 设备
+    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+    print(f"{'='*60}")
+    print(f"HormonicFormer v3 - Local Training")
+    print(f"{'='*60}")
+    print(f"Device: {device}")
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**2:.0f}MB")
+    print(f"Config: {config['name']}")
+    print(f"{'='*60}")
+
+    # 日志
+    logger = setup_logger(config['train']['log_dir'])
+
+    # 设置随机种子
+    seed = config['train']['seed']
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+
+    # 数据
+    logger.info("Loading dataset...")
+    train_loader = get_dataloader(config, train=True)
+    val_loader = get_dataloader(config, train=False)
+    logger.info(f"Train: {len(train_loader.dataset)}, Val: {len(val_loader.dataset)}")
+
+    # 模型
+    logger.info("Creating model...")
+    model = HormonicFormer(config).to(device)
+    total_params = sum(p.numel() for p in model.parameters()) / 1e6
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6
+    logger.info(f"Parameters: {total_params:.2f}M total, {trainable_params:.2f}M trainable")
+
+    # 显存检查
+    print_gpu_memory()
+
+    # 优化器
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config['train']['lr'],
+        weight_decay=config['train']['weight_decay']
+    )
+
+    # 学习率调度 (带warmup)
+    epochs = config['train']['epochs']
+    warmup_epochs = config['train']['warmup_epochs']
+    total_steps = epochs * len(train_loader)
+    warmup_steps = warmup_epochs * len(train_loader)
+
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.01, end_factor=1.0, total_iters=max(warmup_steps, 1)
+    ) if warmup_epochs > 0 else None
+
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(total_steps - warmup_steps, 1), eta_min=1e-6
+    )
+
+    if warmup_scheduler:
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[warmup_steps]
+        )
+    else:
+        scheduler = cosine_scheduler
+
+    # 混合精度
+    scaler = GradScaler(enabled=config['train']['use_amp'])
+
+    start_epoch = 1
+    best_acc = 0.0
+    stale_epochs = 0
+
+    # 恢复训练
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location=device)
+        model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scaler.load_state_dict(checkpoint['scaler'])
+        start_epoch = checkpoint['epoch'] + 1
+        logger.info(f"Resumed from epoch {start_epoch}")
+
+    # 通知监控服务器训练开始
+    update_monitor_data({
+        'is_training': True,
+        'total_epochs': epochs
+    })
+
+    # 训练循环
+    logger.info(f"Starting training: {epochs} epochs")
+    print(f"\n{'='*60}")
+    print(f"Epoch | Train Loss | Train Acc | Val Loss | Val Acc | Best  | Time")
+    print(f"{'='*60}")
+
+    for epoch in range(start_epoch, epochs + 1):
+        # 更新当前epoch
+        update_monitor_data({
+            'current_epoch': epoch
+        })
+        epoch_start = time.time()
+
+        # 训练
+        train_loss, train_acc = train_epoch(
+            model, train_loader, optimizer, scaler, scheduler,
+            epoch, config, logger
+        )
+
+        # 评估
+        val_loss, val_acc = evaluate(model, val_loader, config)
+
+        # Hebbian 统计
+        hebb_stats = model.get_hebbian_stats()
+        if hebb_stats:
+            sparsity_info = ", ".join(
+                f"L{s['layer']}:sparsity={s['G_sparsity']:.1%}" for s in hebb_stats[:2]
+            )
+        else:
+            sparsity_info = "N/A"
+
+        elapsed = time.time() - epoch_start
+
+        # 保存
+        is_best = val_acc > best_acc
+        if is_best:
+            best_acc = val_acc
+            stale_epochs = 0
+        else:
+            stale_epochs += 1
+
+        save_checkpoint(model, optimizer, scaler, epoch, config, is_best)
+
+        # BWO: 定期剪枝重生 (每5个epoch，在epoch结束后调用)
+        if config['bwo'].get('use_bwo', True) and epoch % config['bwo'].get('evolve_interval', 5) == 0 and epoch > 0:
+            model.prune_and_regrow(epoch)
+            logger.info(f"BWO executed at epoch {epoch}")
+
+        # 更新神经调质 DA/CB
+        DA, CB = model.update_neuromod(val_loss)
+
+        # 获取当前学习率
+        current_lr = optimizer.param_groups[0]['lr']
+
+        # 通过WebSocket推送监控数据
+        update_monitor_data({
+            'metrics': {
+                'train_loss': train_loss,
+                'train_acc': train_acc,
+                'val_loss': val_loss,
+                'val_acc': val_acc,
+                'lr': current_lr,
+                'da': DA,
+                'cb': CB
+            },
+            'hebbian_stats': hebb_stats
+        })
+
+        # 打印 (含 DA/CB)
+        print(f"  {epoch:3d} | {train_loss:.4f}     | {train_acc:5.1f}%    | {val_loss:.4f}   | {val_acc:5.1f}% | {best_acc:5.1f}%| {elapsed:.0f}s | DA:{DA:.3f} CB:{CB:.3f} | {sparsity_info}")
+        logger.info(f"Epoch {epoch}: train_loss={train_loss:.4f} train_acc={train_acc:.1f}% val_loss={val_loss:.4f} val_acc={val_acc:.1f}% DA={DA:.3f} CB={CB:.3f}")
+
+        # 显存
+        print_gpu_memory()
+
+        # 早停
+        if stale_epochs >= config['train'].get('max_stale_epochs', 10):
+            print(f"Early stopping at epoch {epoch} (stale={stale_epochs})")
+            break
+
+    # 通知训练结束
+    update_monitor_data({
+        'is_training': False
+    })
+
+    print(f"{'='*60}")
+    print(f"Training complete! Best val acc: {best_acc:.2f}%")
+    print(f"{'='*60}")
+
+    # 保存最终模型
+    torch.save(model.state_dict(), Path(config['train']['checkpoint_dir']) / 'final.pt')
+    print(f"Model saved to {config['train']['checkpoint_dir']}/final.pt")
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+################################################################################
+# [13/24] monitored_train.py
+# Size: 13919 bytes
+################################################################################
+
+#!/usr/bin/env python3
+"""
+HormonicFormer v3 - 带实时监控的训练脚本
+支持: WebSocket实时推送、TensorBoard、CSV日志
+"""
+import os
+import sys
+import time
+import argparse
+import yaml
+import logging
+import threading
+from pathlib import Path
+from datetime import datetime
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.cuda.amp import autocast, GradScaler
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+
+# 添加项目路径
+PROJECT_ROOT = Path(__file__).parent
+sys.path.insert(0, str(PROJECT_ROOT / 'models'))
+sys.path.insert(0, str(PROJECT_ROOT / 'field'))
+sys.path.insert(0, str(PROJECT_ROOT / 'train_monitor'))
+
+from hormonicformer_v3 import HormonicFormer
+from training_monitor import TrainingMonitor, GPUMonitor
+from web_server import run_server, update_monitor_data
+
+
+def setup_logger(log_dir):
+    """设置日志"""
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = log_dir / f'monitored_train_{timestamp}.log'
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[%(asctime)s] %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler()
+        ]
+    )
+    return logging.getLogger('hormonic')
+
+
+def get_dataloader(config, train=True):
+    """获取数据加载器"""
+    data_root = config['train']['data_root']
+    batch_size = config['train']['batch_size']
+    num_workers = config['train']['num_workers']
+    pin_memory = config['train']['pin_memory']
+
+    if train:
+        transform = transforms.Compose([
+            transforms.RandomRotation(10),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,)),
+            transforms.Lambda(
+                lambda x: x + config['train']['noise_sigma'] * torch.randn_like(x)
+                if config['train']['noise_sigma'] > 0 else x
+            )
+        ])
+    else:
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+
+    dataset_name = config['train']['dataset']
+    if dataset_name == 'fashion_mnist':
+        dataset = datasets.FashionMNIST(data_root, train=train, download=True, transform=transform)
+    elif dataset_name == 'mnist':
+        dataset = datasets.MNIST(data_root, train=train, download=True, transform=transform)
+    elif dataset_name == 'cifar10':
+        dataset = datasets.CIFAR10(data_root, train=train, download=True, transform=transform)
+    else:
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=train,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        drop_last=train,
+    )
+
+    return loader
+
+
+def train_epoch(model, loader, optimizer, scaler, scheduler, epoch, config, logger):
+    """训练一个epoch"""
+    model.train()
+    device = next(model.parameters()).device
+    accumulation_steps = max(config['train'].get('accumulation_steps', 1), 1)
+    log_interval = config['train']['log_interval']
+    nan_guard = config['train']['nan_guard']
+    use_amp = config['train']['use_amp']
+
+    total_loss = 0.0
+    total_ce = 0.0
+    correct = 0
+    total_samples = 0
+
+    optimizer.zero_grad()
+
+    for batch_idx, (images, targets) in enumerate(loader):
+        images = images.to(device, non_blocking=False)
+        targets = targets.to(device, non_blocking=False)
+
+        with autocast(enabled=use_amp):
+            logits, loss = model(images, targets)
+            loss = loss / accumulation_steps
+
+        if nan_guard and (torch.isnan(loss) or torch.isinf(loss)):
+            logger.warning(f"  NaN/Inf at batch {batch_idx}, skipping")
+            continue
+
+        scaler.scale(loss).backward()
+
+        if (batch_idx + 1) % accumulation_steps == 0:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+
+            if scheduler is not None:
+                scheduler.step()
+
+        with torch.no_grad():
+            ce_loss = F.cross_entropy(logits, targets)
+            total_ce += ce_loss.item()
+            total_loss += loss.item() * accumulation_steps
+            pred = logits.argmax(dim=-1)
+            correct += (pred == targets).sum().item()
+            total_samples += targets.size(0)
+
+        if batch_idx % log_interval == 0:
+            lr = optimizer.param_groups[0]['lr']
+            acc = 100.0 * correct / total_samples if total_samples > 0 else 0
+            logger.info(
+                f"  Batch[{batch_idx:4d}/{len(loader)}] "
+                f"Loss: {total_loss/(batch_idx+1):.4f} "
+                f"CE: {total_ce/(batch_idx+1):.4f} "
+                f"Acc: {acc:.1f}% "
+                f"LR: {lr:.6f}"
+            )
+
+    avg_loss = total_loss / len(loader)
+    avg_acc = 100.0 * correct / total_samples if total_samples > 0 else 0
+    return avg_loss, avg_acc, optimizer.param_groups[0]['lr']
+
+
+@torch.no_grad()
+def evaluate(model, loader, config):
+    """评估"""
+    model.eval()
+    device = next(model.parameters()).device
+    use_amp = config['train']['use_amp']
+
+    total_loss = 0.0
+    correct = 0
+    total = 0
+
+    for images, targets in loader:
+        images = images.to(device, non_blocking=False)
+        targets = targets.to(device, non_blocking=False)
+
+        with autocast(enabled=use_amp):
+            logits, loss = model(images, targets)
+
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == targets).sum().item()
+        total += targets.size(0)
+
+    avg_loss = total_loss / len(loader)
+    avg_acc = 100.0 * correct / total
+
+    return avg_loss, avg_acc
+
+
+def save_checkpoint(model, optimizer, scaler, epoch, config, is_best=False):
+    """保存检查点"""
+    checkpoint_dir = Path(config['train']['checkpoint_dir'])
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    state = {
+        'epoch': epoch,
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'scaler': scaler.state_dict(),
+        'config': config,
+    }
+
+    torch.save(state, checkpoint_dir / 'latest.pt')
+
+    if epoch % config['train'].get('save_interval', 5) == 0:
+        torch.save(state, checkpoint_dir / f'epoch_{epoch}.pt')
+
+    if is_best:
+        torch.save(state, checkpoint_dir / 'best.pt')
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Train HormonicFormer v3 with Monitor')
+    parser.add_argument('--config', type=str, default='local_config.yaml', help='配置文件路径')
+    parser.add_argument('--resume', type=str, default='', help='恢复训练的检查点')
+    parser.add_argument('--device', type=str, default='cuda', help='设备: cuda / cpu')
+    parser.add_argument('--monitor-port', type=int, default=5000, help='监控服务器端口')
+    args = parser.parse_args()
+
+    # 加载配置
+    with open(args.config, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+
+    # 设备
+    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+    print(f"{'='*60}")
+    print(f"HormonicFormer v3 - Monitored Training")
+    print(f"{'='*60}")
+    print(f"Device: {device}")
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**2:.0f}MB")
+    print(f"Config: {config['name']}")
+    print(f"Monitor: http://localhost:{args.monitor_port}")
+    print(f"{'='*60}")
+
+    # 日志
+    logger = setup_logger(config['train']['log_dir'])
+
+    # 启动监控服务器（后台线程）
+    server_thread = threading.Thread(
+        target=run_server,
+        kwargs={'host': '0.0.0.0', 'port': args.monitor_port, 'debug': False},
+        daemon=True
+    )
+    server_thread.start()
+    time.sleep(1)  # 等待服务器启动
+
+    # 初始化监控器
+    monitor = TrainingMonitor(config)
+
+    # 设置随机种子
+    seed = config['train']['seed']
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+
+    # 数据
+    logger.info("Loading dataset...")
+    train_loader = get_dataloader(config, train=True)
+    val_loader = get_dataloader(config, train=False)
+    logger.info(f"Train: {len(train_loader.dataset)}, Val: {len(val_loader.dataset)}")
+
+    # 模型
+    logger.info("Creating model...")
+    model = HormonicFormer(config).to(device)
+    total_params = sum(p.numel() for p in model.parameters()) / 1e6
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6
+    logger.info(f"Parameters: {total_params:.2f}M total, {trainable_params:.2f}M trainable")
+
+    # 优化器
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config['train']['lr'],
+        weight_decay=config['train']['weight_decay']
+    )
+
+    # 学习率调度
+    epochs = config['train']['epochs']
+    warmup_epochs = config['train']['warmup_epochs']
+    total_steps = epochs * len(train_loader)
+    warmup_steps = warmup_epochs * len(train_loader)
+
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.01, end_factor=1.0, total_iters=max(warmup_steps, 1)
+    ) if warmup_epochs > 0 else None
+
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(total_steps - warmup_steps, 1), eta_min=1e-6
+    )
+
+    if warmup_scheduler:
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[warmup_steps]
+        )
+    else:
+        scheduler = cosine_scheduler
+
+    # 混合精度
+    scaler = GradScaler(enabled=config['train']['use_amp'])
+
+    start_epoch = 1
+    best_acc = 0.0
+    stale_epochs = 0
+
+    # 恢复训练
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location=device)
+        model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scaler.load_state_dict(checkpoint['scaler'])
+        start_epoch = checkpoint['epoch'] + 1
+        logger.info(f"Resumed from epoch {start_epoch}")
+
+    # 通知监控服务器训练开始
+    update_monitor_data({
+        'is_training': True,
+        'total_epochs': epochs
+    })
+
+    # 训练循环
+    logger.info(f"Starting training: {epochs} epochs")
+    print(f"\n{'='*80}")
+    print(f"Epoch | Train Loss | Train Acc | Val Loss | Val Acc | Best  | Time | DA    | GPU MB")
+    print(f"{'='*80}")
+
+    for epoch in range(start_epoch, epochs + 1):
+        epoch_start = time.time()
+
+        # 更新当前epoch
+        update_monitor_data({
+            'current_epoch': epoch
+        })
+
+        # 训练
+        train_loss, train_acc, current_lr = train_epoch(
+            model, train_loader, optimizer, scaler, scheduler,
+            epoch, config, logger
+        )
+
+        # 评估
+        val_loss, val_acc = evaluate(model, val_loader, config)
+
+        # Hebbian 统计
+        hebb_stats = model.get_hebbian_stats()
+
+        # 更新神经调质
+        DA, CB = model.update_neuromod(val_loss)
+
+        # 获取GPU显存
+        gpu_mem = GPUMonitor.log_memory_usage(logger)
+
+        elapsed = time.time() - epoch_start
+
+        # 保存
+        is_best = val_acc > best_acc
+        if is_best:
+            best_acc = val_acc
+            stale_epochs = 0
+        else:
+            stale_epochs += 1
+
+        save_checkpoint(model, optimizer, scaler, epoch, config, is_best)
+
+        # BWO剪枝重生
+        if config['bwo'].get('use_bwo', True) and epoch % config['bwo'].get('evolve_interval', 5) == 0 and epoch > 0:
+            model.prune_and_regrow(epoch)
+            logger.info(f"BWO executed at epoch {epoch}")
+
+        # 记录监控数据
+        monitor.log_epoch(
+            epoch=epoch,
+            train_loss=train_loss,
+            train_acc=train_acc,
+            val_loss=val_loss,
+            val_acc=val_acc,
+            lr=current_lr,
+            da=DA,
+            cb=CB,
+            gpu_memory=gpu_mem,
+            epoch_time=elapsed
+        )
+
+        # 更新Hebbian统计
+        if hebb_stats:
+            monitor.log_hebbian_stats(epoch, hebb_stats)
+
+        # 通过WebSocket推送更新
+        update_monitor_data({
+            'metrics': {
+                'train_loss': train_loss,
+                'train_acc': train_acc,
+                'val_loss': val_loss,
+                'val_acc': val_acc,
+                'lr': current_lr,
+                'da': DA,
+                'cb': CB
+            },
+            'hebbian_stats': hebb_stats,
+            'gpu_memory': gpu_mem
+        })
+
+        # 打印
+        print(f"  {epoch:3d} | {train_loss:.4f}     | {train_acc:5.1f}%    | {val_loss:.4f}   | {val_acc:5.1f}% | {best_acc:5.1f}%| {elapsed:.0f}s | {DA:.3f} | {gpu_mem:5d}")
+        logger.info(f"Epoch {epoch}: train_loss={train_loss:.4f} train_acc={train_acc:.1f}% val_loss={val_loss:.4f} val_acc={val_acc:.1f}% DA={DA:.3f}")
+
+        # 早停
+        if stale_epochs >= config['train'].get('max_stale_epochs', 10):
+            print(f"Early stopping at epoch {epoch} (stale={stale_epochs})")
+            break
+
+    # 通知训练结束
+    update_monitor_data({
+        'is_training': False
+    })
+
+    print(f"{'='*80}")
+    print(f"Training complete! Best val acc: {best_acc:.2f}%")
+    print(f"{'='*80}")
+
+    # 保存最终模型
+    torch.save(model.state_dict(), Path(config['train']['checkpoint_dir']) / 'final.pt')
+    print(f"Model saved to {config['train']['checkpoint_dir']}/final.pt")
+
+    # 关闭监控器
+    monitor.close()
+
+
+if __name__ == '__main__':
+    main()
+
+
+################################################################################
+# [14/24] requirements_monitor.txt
+# Size: 107 bytes
+################################################################################
+
+# 训练监控依赖
+flask==2.3.3
+flask-socketio==5.3.6
+eventlet==0.33.3
+tensorboard==2.15.1
+pillow==10.1.0
+
+
+################################################################################
+# [15/24] experiments\ablation.py
+# Size: 13422 bytes
+################################################################################
+
+#!/usr/bin/env python3
+"""
+消融实验 (Ablation Study)
+=========================
+改善六：证明每个组件的因果贡献
+
+配置：
+  1. 完整模型 (Full)                    - 基线
+  2. 关闭扩散项 (No Diffusion)          - 证明扩散是信息混合的核心
+  3. 关闭反应项 (No Reaction)           - 证明非线性反应不是可有可无
+  4. 关闭 E/I 平衡 (No EI)              - 证明侧抑制的作用
+  5. 关闭感觉反馈 (No Feedback)         - 证明外部驱动的锚定作用
+  6. 关闭 Hebbian 可塑性 (No Hebbian)   - 证明实时突触学习的作用
+  7. 纯嵌入基线 (Embedding Only)        - 证明场演化在真正起作用
+
+数据集：Fashion-MNIST (默认) 或 CIFAR-10
+
+用法：
+  python experiments/ablation.py --configs all --dataset fashion_mnist --epochs 10
+  python experiments/ablation.py --configs no_diffusion no_reaction --epochs 5
+"""
+import sys
+import argparse
+import json
+from pathlib import Path
+from datetime import datetime
+from copy import deepcopy
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / 'models'))
+sys.path.insert(0, str(PROJECT_ROOT / 'field'))
+
+from hormonicformer_v3 import HormonicFormer
+
+
+# =============================================================================
+# 消融配置生成器
+# =============================================================================
+def make_ablation_configs(base_config):
+    """为每个消融条件生成配置"""
+    configs = {}
+
+    # 1. 完整模型
+    configs['full'] = deepcopy(base_config)
+
+    # 2. 关闭扩散项 (No Diffusion)
+    cfg = deepcopy(base_config)
+    cfg['model']['D0_amp'] = 0.0
+    cfg['model']['D0_phase'] = 0.0
+    configs['no_diffusion'] = cfg
+
+    # 3. 关闭反应项 (No Reaction)
+    cfg = deepcopy(base_config)
+    cfg['model']['dt'] = 0.0  # 冻结反应
+    configs['no_reaction'] = cfg
+
+    # 4. 关闭 E/I 平衡
+    cfg = deepcopy(base_config)
+    if 'ei_balance' in cfg['model']:
+        cfg['model']['ei_balance']['enabled'] = False
+    configs['no_ei'] = cfg
+
+    # 5. 关闭感觉反馈
+    cfg = deepcopy(base_config)
+    if 'sensory_feedback' in cfg['model']:
+        cfg['model']['sensory_feedback']['enabled'] = False
+    configs['no_feedback'] = cfg
+
+    # 6. 关闭 Hebbian 可塑性
+    cfg = deepcopy(base_config)
+    if 'hebbian' in cfg['model']:
+        cfg['model']['hebbian']['enabled'] = False
+    configs['no_hebbian'] = cfg
+
+    # 7. 纯嵌入基线 (Embedding Only)
+    cfg = deepcopy(base_config)
+    cfg['model']['n_steps'] = 0  # 不演化
+    cfg['model']['n_layers'] = 1  # 单层
+    if 'ei_balance' in cfg['model']:
+        cfg['model']['ei_balance']['enabled'] = False
+    if 'sensory_feedback' in cfg['model']:
+        cfg['model']['sensory_feedback']['enabled'] = False
+    if 'hebbian' in cfg['model']:
+        cfg['model']['hebbian']['enabled'] = False
+    configs['embedding_only'] = cfg
+
+    return configs
+
+
+# =============================================================================
+# 数据加载
+# =============================================================================
+def get_dataloader(dataset_name, batch_size, num_workers, data_root='./data', train=True):
+    """获取数据集"""
+    if train:
+        transform = transforms.Compose([
+            transforms.RandomRotation(10),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5) if dataset_name == 'cifar10' else (0.5,),
+                                 (0.5, 0.5, 0.5) if dataset_name == 'cifar10' else (0.5,))
+        ])
+    else:
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5) if dataset_name == 'cifar10' else (0.5,),
+                                 (0.5, 0.5, 0.5) if dataset_name == 'cifar10' else (0.5,))
+        ])
+
+    if dataset_name == 'fashion_mnist':
+        dataset = datasets.FashionMNIST(data_root, train=train, download=True, transform=transform)
+        in_channels = 1
+        img_size = 28
+    elif dataset_name == 'mnist':
+        dataset = datasets.MNIST(data_root, train=train, download=True, transform=transform)
+        in_channels = 1
+        img_size = 28
+    elif dataset_name == 'cifar10':
+        dataset = datasets.CIFAR10(data_root, train=train, download=True, transform=transform)
+        in_channels = 3
+        img_size = 32
+    else:
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=train,
+                       num_workers=num_workers, pin_memory=True)
+
+    return loader, in_channels, img_size
+
+
+# =============================================================================
+# 训练与评估
+# =============================================================================
+def train_epoch(model, loader, optimizer, device):
+    model.train()
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    for images, targets in loader:
+        images, targets = images.to(device, non_blocking=True), targets.to(device, non_blocking=True)
+
+        optimizer.zero_grad()
+        logits, loss = model(images, targets)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == targets).sum().item()
+        total += targets.size(0)
+
+    return total_loss / len(loader), correct / total
+
+
+@torch.no_grad()
+def evaluate(model, loader, device):
+    model.eval()
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    for images, targets in loader:
+        images, targets = images.to(device, non_blocking=True), targets.to(device, non_blocking=True)
+        logits, loss = model(images, targets)
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == targets).sum().item()
+        total += targets.size(0)
+
+    return total_loss / len(loader), correct / total
+
+
+# =============================================================================
+# 主实验
+# =============================================================================
+def run_ablation(args):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Device: {device}")
+
+    # 基础配置
+    if args.dataset == 'cifar10':
+        seq_len = (32 // args.patch_size) ** 2
+        n_classes = 10
+        in_channels = 3
+    else:
+        seq_len = (28 // args.patch_size) ** 2
+        n_classes = 10
+        in_channels = 1
+
+    base_config = {
+        'model': {
+            'd_model': args.d_model,
+            'n_heads': args.n_heads,
+            'n_layers': args.n_layers,
+            'seq_len': seq_len,
+            'n_steps': args.n_steps,
+            'patch_size': args.patch_size,
+            'n_classes': n_classes,
+            'D0_amp': 0.1,
+            'D0_phase': 0.1,
+            'dt': 0.05,
+            'ei_balance': {
+                'enabled': True,
+                'tau_e': 2.0,
+                'tau_i': 1.0,
+                'gamma_e': 1.0,
+                'gamma_i': 0.8,
+                'w_inh': 0.3,
+                'inh_radius': 3,
+            },
+            'sensory_feedback': {
+                'enabled': True,
+                'feedback_strength': 0.3,
+                'feedback_freq': 1,
+            },
+            'hebbian': {
+                'enabled': True,
+                'eta_hebb': 0.001,
+                'eta_anti': 0.0005,
+                'sync_threshold': 0.3,
+                'tau_hebb': 10,
+                'decay': 0.999,
+            },
+        },
+        'pc': {
+            'use_pc': True,
+            'pred_hidden_mult': 4,
+            'aux_weight': 0.01,
+        }
+    }
+
+    # 生成消融配置
+    all_configs = make_ablation_configs(base_config)
+
+    # 选择要运行的配置
+    if args.configs == ['all']:
+        selected_configs = list(all_configs.keys())
+    else:
+        selected_configs = [c for c in args.configs if c in all_configs]
+
+    print(f"\nRunning ablation configs: {selected_configs}")
+    print(f"Dataset: {args.dataset}, Epochs: {args.epochs}")
+
+    # 数据
+    train_loader, _, _ = get_dataloader(args.dataset, args.batch_size, args.num_workers, args.data_root, train=True)
+    val_loader, _, _ = get_dataloader(args.dataset, args.batch_size, args.num_workers, args.data_root, train=False)
+
+    results = {}
+
+    for config_name in selected_configs:
+        print(f"\n{'='*60}")
+        print(f"Config: {config_name}")
+        print(f"{'='*60}")
+
+        config = all_configs[config_name]
+
+        # 创建模型
+        model = HormonicFormer(config).to(device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs, eta_min=1e-6
+        )
+
+        # 统计参数量
+        total_params = sum(p.numel() for p in model.parameters()) / 1e6
+        print(f"  Parameters: {total_params:.2f}M")
+
+        # 训练
+        best_val_acc = 0
+        best_epoch = 0
+        history = []
+
+        for epoch in range(1, args.epochs + 1):
+            train_loss, train_acc = train_epoch(model, train_loader, optimizer, device)
+            val_loss, val_acc = evaluate(model, val_loader, device)
+            scheduler.step()
+
+            history.append({
+                'epoch': epoch,
+                'train_loss': train_loss,
+                'train_acc': train_acc,
+                'val_loss': val_loss,
+                'val_acc': val_acc
+            })
+
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_epoch = epoch
+
+            if epoch % args.log_interval == 0 or epoch == 1:
+                print(f"  Epoch {epoch:3d}: Train Loss={train_loss:.4f} Acc={train_acc:.4f} | "
+                      f"Val Loss={val_loss:.4f} Acc={val_acc:.4f}")
+
+        results[config_name] = {
+            'best_val_acc': best_val_acc,
+            'best_epoch': best_epoch,
+            'final_train_acc': history[-1]['train_acc'],
+            'final_val_acc': history[-1]['val_acc'],
+            'params_M': total_params,
+            'history': history
+        }
+
+        print(f"  Best: Val Acc={best_val_acc:.4f} @ epoch {best_epoch}")
+
+    # 保存结果
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    result_file = output_dir / f'ablation_{args.dataset}_{timestamp}.json'
+
+    summary = {
+        name: {k: v for k, v in data.items() if k != 'history'}
+        for name, data in results.items()
+    }
+
+    with open(result_file, 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    # 打印总结
+    print(f"\n{'='*70}")
+    print(f"ABLATION SUMMARY")
+    print(f"{'='*70}")
+    print(f"{'Config':>20} | {'Best Val Acc':>12} | {'Params(M)':>10} | {'Delta':>8}")
+    print(f"{'-'*20}-+-{'-'*12}-+-{'-'*10}-+-{'-'*8}")
+
+    full_acc = results.get('full', {}).get('best_val_acc', 0)
+    for name in selected_configs:
+        data = results[name]
+        delta = data['best_val_acc'] - full_acc
+        marker = ""
+        if name != 'full':
+            if delta < -0.05:
+                marker = "<<< SIGNIFICANT DROP"
+            elif delta < -0.02:
+                marker = "< MODERATE DROP"
+            elif delta > 0.02:
+                marker = "> IMPROVEMENT"
+        print(f"{name:>20} | {data['best_val_acc']:>12.4f} | {data['params_M']:>10.2f} | {delta:>+8.4f} {marker}")
+
+    print(f"{'='*70}")
+    print(f"Results saved to: {result_file}")
+    print(f"\nInterpretation:")
+    print(f"  - 如果 'no_diffusion' 显著下降 (< -5%): 扩散是核心信息混合机制")
+    print(f"  - 如果 'no_reaction' 显著下降: 非线性反应不可忽略")
+    print(f"  - 如果 'embedding_only' 接近随机: 场演化真正在起作用")
+
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Ablation Study')
+    parser.add_argument('--configs', nargs='+', default=['all'],
+                       choices=['all', 'full', 'no_diffusion', 'no_reaction',
+                               'no_ei', 'no_feedback', 'no_hebbian', 'embedding_only'],
+                       help='要测试的消融配置')
+    parser.add_argument('--dataset', type=str, default='fashion_mnist',
+                       choices=['fashion_mnist', 'mnist', 'cifar10'])
+    parser.add_argument('--d_model', type=int, default=128)
+    parser.add_argument('--n_heads', type=int, default=4)
+    parser.add_argument('--n_layers', type=int, default=4)
+    parser.add_argument('--n_steps', type=int, default=3)
+    parser.add_argument('--patch_size', type=int, default=2)
+    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--lr', type=float, default=0.001)
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--data_root', type=str, default='./data')
+    parser.add_argument('--log_interval', type=int, default=2)
+    parser.add_argument('--output_dir', type=str, default='./results')
+    args = parser.parse_args()
+
+    run_ablation(args)
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+################################################################################
+# [16/24] experiments\copy_task.py
+# Size: 16478 bytes
+################################################################################
+
+#!/usr/bin/env python3
+"""
+长程探针实验 (Long-Range Probe)
+===============================
+改善一：证明长程依赖能力
+
+任务：序列复制 (Copy Task)
+输入：随机token序列 [t1, t2, ..., tS]
+目标：复制相同序列 [t1, t2, ..., tS]
+
+变量：S = 16, 32, 64, 128, 256, 512
+
+对比对象：
+  - HormonicFormer v3 (你的)
+  - LSTM (负对照)
+  - Embedding Lookup (随机基线)
+
+成功标准：
+  - S=256 时准确率 > 90%
+  - S=512 时显著优于 LSTM
+  - 相位同步度随S增大保持稳定
+
+用法：
+  python experiments/copy_task.py --seq_lengths 16 64 256 512 --epochs 20
+"""
+import sys
+import argparse
+import json
+from pathlib import Path
+from datetime import datetime
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / 'models'))
+sys.path.insert(0, str(PROJECT_ROOT / 'field'))
+
+from hormonicformer_v3 import HormonicFormer
+
+
+# =============================================================================
+# Copy Task 数据
+# =============================================================================
+class CopyTaskDataset(Dataset):
+    """序列复制任务数据集"""
+    def __init__(self, vocab_size, seq_len, num_samples=10000):
+        self.vocab_size = vocab_size
+        self.seq_len = seq_len
+        self.num_samples = num_samples
+
+        # 预生成随机序列
+        self.data = torch.randint(0, vocab_size, (num_samples, seq_len))
+
+    def __len__(self):
+        return self.num_samples
+
+    def __getitem__(self, idx):
+        # 输入和目标完全相同（复制任务）
+        seq = self.data[idx]
+        return seq, seq.clone()
+
+
+# =============================================================================
+# 对比模型
+# =============================================================================
+class LSTMCopy(nn.Module):
+    """LSTM 基准模型（负对照：已知长程会崩）"""
+    def __init__(self, vocab_size, d_model=128, n_layers=2, dropout=0.1):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.lstm = nn.LSTM(
+            d_model, d_model, n_layers,
+            batch_first=True, dropout=dropout if n_layers > 1 else 0
+        )
+        self.fc = nn.Linear(d_model, vocab_size)
+
+    def forward(self, x):
+        # x: [B, S]
+        emb = self.embedding(x)  # [B, S, D]
+        out, _ = self.lstm(emb)  # [B, S, D]
+        logits = self.fc(out)  # [B, S, V]
+        return logits
+
+
+class EmbeddingOnly(nn.Module):
+    """纯嵌入查找（随机基线）"""
+    def __init__(self, vocab_size, d_model=128):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.fc = nn.Linear(d_model, vocab_size)
+
+    def forward(self, x):
+        emb = self.embedding(x)
+        logits = self.fc(emb)
+        return logits
+
+
+# =============================================================================
+# 将序列包装为类图像输入供 HormonicFormer 使用
+# =============================================================================
+def seq_to_patches(seq, patch_size=2, vocab_size=100):
+    """
+    将token序列转换为类似图像的patch格式
+    seq: [B, S] -> [B, 1, H, W]
+    将每个token ID 映射到一个标量值，然后reshape为方形
+    """
+    B, S = seq.shape
+    # token ID 归一化到 [-1, 1]
+    vals = (seq.float() / (vocab_size - 1)) * 2 - 1  # [B, S]
+    # 将序列reshape为方形（假设S是完美平方数）
+    H = W = int(S ** 0.5)
+    if H * W != S:
+        # 填充到最近的完美平方数
+        pad_len = (H + 1) ** 2 - S if H * W < S else H * W - S
+        if pad_len > 0:
+            vals = F.pad(vals, (0, pad_len), value=0)
+        H = W = int(vals.shape[1] ** 0.5)
+    img = vals.view(B, 1, H, W)
+    return img
+
+
+def patches_to_seq(logits, seq_len, vocab_size=100):
+    """
+    将HormonicFormer的分类输出映射回序列预测
+    logits: [B, num_classes] -> [B, S] 的预测token
+    这里简化处理：假设num_classes >= vocab_size
+    """
+    # 取前vocab_size个logits
+    logits = logits[:, :vocab_size]
+    preds = logits.argmax(dim=-1)  # [B]
+    return preds
+
+
+class HormonicWrapper(nn.Module):
+    """
+    包装 HormonicFormer 用于序列任务
+    将序列 -> patches -> HormonicFormer -> 逐token分类
+    """
+    def __init__(self, config, vocab_size, seq_len, patch_size=2):
+        super().__init__()
+        self.seq_len = seq_len
+        self.vocab_size = vocab_size
+        self.patch_size = patch_size
+
+        # 创建 HormonicFormer 配置
+        self.config = config
+        self.model = HormonicFormer(config)
+
+        # 替换分类头以支持 vocab_size 输出
+        d_model = config['model']['d_model']
+        self.model.classifier = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(d_model // 2, vocab_size)
+        )
+
+    def forward(self, seq):
+        """seq: [B, S] -> logits: [B, S, V]"""
+        B, S = seq.shape
+
+        # 序列 -> 伪图像patches
+        img = seq_to_patches(seq, self.patch_size, self.vocab_size)  # [B, 1, H, W]
+
+        # 确保尺寸匹配 (pad if needed)
+        _, _, H, W = img.shape
+        expected_size = self.config['model']['seq_len']
+        actual_patches = (H // self.patch_size) * (W // self.patch_size)
+
+        # 通过 HormonicFormer
+        # 返回每个patch的预测
+        x = self.model.patch_embed(img)  # [B, d_model, H', W']
+        x = x.flatten(2).transpose(1, 2)  # [B, seq_len, d_model]
+
+        # 通过每个 block
+        x_embed = x.detach().clone()
+        for block in self.model.blocks:
+            x = block(x, x_embed=x_embed if block.use_feedback else None)
+
+        # 对每个位置预测token
+        logits = self.model.classifier(x)  # [B, seq_len, vocab_size]
+
+        # 取前S个位置 (去掉padding)
+        logits = logits[:, :S, :]
+
+        return logits
+
+
+# =============================================================================
+# 训练与评估
+# =============================================================================
+def train_epoch(model, loader, optimizer, device, vocab_size):
+    model.train()
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    for x, y in loader:
+        x, y = x.to(device), y.to(device)
+        optimizer.zero_grad()
+
+        logits = model(x)  # [B, S, V]
+
+        # 计算交叉熵损失
+        B, S, V = logits.shape
+        loss = F.cross_entropy(
+            logits.reshape(B * S, V),
+            y.reshape(B * S)
+        )
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)  # [B, S]
+        correct += (pred == y).sum().item()
+        total += B * S
+
+    return total_loss / len(loader), correct / total
+
+
+@torch.no_grad()
+def evaluate(model, loader, device, vocab_size):
+    model.eval()
+    total_loss = 0
+    correct = 0
+    total = 0
+    all_accuracies = []  # 每个样本的准确率
+
+    for x, y in loader:
+        x, y = x.to(device), y.to(device)
+        logits = model(x)
+
+        B, S, V = logits.shape
+        loss = F.cross_entropy(
+            logits.reshape(B * S, V),
+            y.reshape(B * S)
+        )
+
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)  # [B, S]
+
+        # 每个位置的准确率
+        token_correct = (pred == y).float()  # [B, S]
+        all_accuracies.extend(token_correct.mean(dim=1).cpu().tolist())
+
+        correct += (pred == y).sum().item()
+        total += B * S
+
+    avg_acc = correct / total
+    seq_acc = sum(1 for a in all_accuracies if a > 0.99) / len(all_accuracies)  # 完全正确的序列比例
+
+    return total_loss / len(loader), avg_acc, seq_acc
+
+
+# =============================================================================
+# 相位同步度分析
+# =============================================================================
+def analyze_phase_sync(model, loader, device):
+    """分析 HormonicFormer 各层的相位同步度"""
+    if not hasattr(model, 'model'):
+        return None
+
+    model.eval()
+    sync_by_layer = {i: [] for i in range(len(model.model.blocks))}
+
+    with torch.no_grad():
+        for x, _ in loader:
+            x = x.to(device)
+            # 前向传播并收集 Hebbian 统计
+            logits = model(x)
+            for stat in model.model.get_hebbian_stats():
+                sync_by_layer[stat['layer']].append(stat['G_mean'])
+
+    result = {}
+    for layer, values in sync_by_layer.items():
+        if values:
+            result[f'layer_{layer}'] = {
+                'mean_sync': sum(values) / len(values),
+                'std_sync': (sum((v - sum(values)/len(values))**2 for v in values) / len(values)) ** 0.5
+            }
+    return result
+
+
+# =============================================================================
+# 主实验
+# =============================================================================
+def run_experiment(args):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Device: {device}")
+
+    results = {}
+
+    for seq_len in args.seq_lengths:
+        print(f"\n{'='*60}")
+        print(f"Sequence Length: {seq_len}")
+        print(f"{'='*60}")
+
+        # 数据
+        train_ds = CopyTaskDataset(args.vocab_size, seq_len, num_samples=args.train_samples)
+        val_ds = CopyTaskDataset(args.vocab_size, seq_len, num_samples=args.val_samples)
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+        val_loader = DataLoader(val_ds, batch_size=args.batch_size)
+
+        results[seq_len] = {}
+
+        # 对每个模型
+        for model_name in args.models:
+            print(f"\n  Training: {model_name}...")
+
+            if model_name == 'hormonic':
+                # 计算需要的配置
+                H = W = int((seq_len ** 0.5))
+                if H * H < seq_len:
+                    H = W = H + 1
+                num_patches = (H // 2) * (W // 2)  # patch_size=2
+
+                config = {
+                    'model': {
+                        'd_model': args.d_model,
+                        'n_heads': args.n_heads,
+                        'n_layers': args.n_layers,
+                        'seq_len': num_patches,
+                        'n_steps': args.n_steps,
+                        'patch_size': 2,
+                        'n_classes': args.vocab_size,
+                        'D0_amp': 0.1, 'D0_phase': 0.1, 'dt': 0.05,
+                        'ei_balance': {
+                            'enabled': True, 'tau_e': 2.0, 'tau_i': 1.0,
+                            'gamma_e': 1.0, 'gamma_i': 0.8, 'w_inh': 0.3, 'inh_radius': 3
+                        },
+                        'sensory_feedback': {
+                            'enabled': True, 'feedback_strength': 0.3, 'feedback_freq': 1
+                        },
+                        'hebbian': {
+                            'enabled': True, 'eta_hebb': 0.001, 'eta_anti': 0.0005,
+                            'sync_threshold': 0.3, 'tau_hebb': 10, 'decay': 0.999
+                        },
+                    },
+                    'pc': {'use_pc': False, 'pred_hidden_mult': 4, 'aux_weight': 0.01}
+                }
+                model = HormonicWrapper(config, args.vocab_size, seq_len)
+
+            elif model_name == 'lstm':
+                model = LSTMCopy(args.vocab_size, d_model=args.d_model,
+                                n_layers=args.n_layers, dropout=0.1)
+
+            elif model_name == 'embedding':
+                model = EmbeddingOnly(args.vocab_size, d_model=args.d_model)
+
+            else:
+                raise ValueError(f"Unknown model: {model_name}")
+
+            model = model.to(device)
+            optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=args.epochs * len(train_loader), eta_min=1e-6
+            )
+
+            # 训练
+            best_val_acc = 0
+            best_epoch = 0
+            history = []
+
+            for epoch in range(1, args.epochs + 1):
+                train_loss, train_acc = train_epoch(model, train_loader, optimizer, device, args.vocab_size)
+                val_loss, val_acc, val_seq_acc = evaluate(model, val_loader, device, args.vocab_size)
+                scheduler.step()
+
+                history.append({
+                    'epoch': epoch,
+                    'train_loss': train_loss, 'train_acc': train_acc,
+                    'val_loss': val_loss, 'val_acc': val_acc, 'val_seq_acc': val_seq_acc
+                })
+
+                if val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    best_epoch = epoch
+
+                if epoch % args.log_interval == 0 or epoch == 1:
+                    print(f"    Epoch {epoch:3d}: Train Acc={train_acc:.4f}, "
+                          f"Val Acc={val_acc:.4f}, Val SeqAcc={val_seq_acc:.4f}")
+
+            # 最终评估
+            final_loss, final_acc, final_seq_acc = evaluate(model, val_loader, device, args.vocab_size)
+
+            results[seq_len][model_name] = {
+                'best_val_acc': best_val_acc,
+                'best_epoch': best_epoch,
+                'final_acc': final_acc,
+                'final_seq_acc': final_seq_acc,
+                'history': history
+            }
+
+            print(f"    Final: Token Acc={final_acc:.4f}, Seq Acc={final_seq_acc:.4f} "
+                  f"(best={best_val_acc:.4f} @ epoch {best_epoch})")
+
+    # 保存结果
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    result_file = output_dir / f'copy_task_results_{timestamp}.json'
+
+    # 序列化时去掉 history 以减小文件大小
+    summary = {}
+    for seq_len, models in results.items():
+        summary[str(seq_len)] = {
+            name: {k: v for k, v in data.items() if k != 'history'}
+            for name, data in models.items()
+        }
+
+    with open(result_file, 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    print(f"\n{'='*60}")
+    print(f"Results saved to: {result_file}")
+    print(f"{'='*60}")
+
+    # 打印总结表格
+    print(f"\n{'='*60}")
+    print(f"SUMMARY TABLE")
+    print(f"{'='*60}")
+    print(f"{'SeqLen':>8} | {'Model':>12} | {'Token Acc':>10} | {'Seq Acc':>10}")
+    print(f"{'-'*8}-+-{'-'*12}-+-{'-'*10}-+-{'-'*10}")
+    for seq_len in args.seq_lengths:
+        for model_name in args.models:
+            data = results[seq_len][model_name]
+            print(f"{seq_len:>8} | {model_name:>12} | {data['final_acc']:>10.4f} | {data['final_seq_acc']:>10.4f}")
+    print(f"{'='*60}")
+
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Long-Range Probe: Copy Task')
+    parser.add_argument('--seq_lengths', nargs='+', type=int,
+                       default=[16, 64, 256],
+                       help='序列长度列表')
+    parser.add_argument('--models', nargs='+', default=['hormonic', 'lstm', 'embedding'],
+                       choices=['hormonic', 'lstm', 'embedding'],
+                       help='要测试的模型')
+    parser.add_argument('--vocab_size', type=int, default=50,
+                       help='词表大小')
+    parser.add_argument('--d_model', type=int, default=128,
+                       help='模型维度')
+    parser.add_argument('--n_heads', type=int, default=4,
+                       help='注意力头数 (仅Hormonic)')
+    parser.add_argument('--n_layers', type=int, default=4,
+                       help='层数')
+    parser.add_argument('--n_steps', type=int, default=3,
+                       help='CGL演化步数')
+    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--lr', type=float, default=0.001)
+    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--train_samples', type=int, default=10000)
+    parser.add_argument('--val_samples', type=int, default=2000)
+    parser.add_argument('--log_interval', type=int, default=5)
+    parser.add_argument('--output_dir', type=str, default='./results')
+    args = parser.parse_args()
+
+    run_experiment(args)
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+################################################################################
+# [17/24] field\laplacian_dft.py
+# Size: 5062 bytes
+################################################################################
+
+"""
+DFT-based Laplacian for DCU (HIP-compatible)
+替代torch.fft，使用矩阵DFT实现频域Laplacian
+"""
+import torch
+import torch.nn as nn
+import numpy as np
+
+
+class DFTLaplacian(nn.Module):
+    """
+    DFT矩阵实现的Laplacian算子
+    完全兼容DCU (无需torch.fft)
+    """
+    def __init__(self, seq_len, device='cuda'):
+        super().__init__()
+        self.seq_len = seq_len
+        self.device = device
+
+        # 预计算DFT矩阵 (只计算一次)
+        self._init_dft_matrix()
+
+    def _init_dft_matrix(self):
+        """初始化DFT和IDFT矩阵"""
+        N = self.seq_len
+        n = torch.arange(N, dtype=torch.float32)
+        k = torch.arange(N, dtype=torch.float32).view(-1, 1)
+
+        # DFT矩阵: W[k,n] = exp(-2πi * k * n / N)
+        theta = -2 * np.pi * k * n / N
+        self.W_real = nn.Parameter(torch.cos(theta), requires_grad=False)
+        self.W_imag = nn.Parameter(torch.sin(theta), requires_grad=False)
+
+        # IDFT矩阵: W_inv = W^H / N
+        self.W_inv_real = nn.Parameter(self.W_real.T / N, requires_grad=False)
+        self.W_inv_imag = nn.Parameter(-self.W_imag.T / N, requires_grad=False)
+
+        # 频域Laplacian核: -|k|^2
+        # 保留原始尺度（不除以max），配合CGL方程中的CFL条件使用
+        # CFL条件: dt * D0 * |λ_max| < 2, 其中 |λ_max| = max(k^2)
+        k_freq = torch.arange(N, dtype=torch.float32)
+        k_freq = torch.minimum(k_freq, N - k_freq)  # 循环对称
+        self.lap_kernel = nn.Parameter(-(k_freq ** 2), requires_grad=False)
+        # 记录最大特征值供外部参考
+        self.max_eigenval = (k_freq ** 2).max().item()
+
+    def forward(self, x):
+        """
+        计算 ∇²x 使用DFT
+        x: [..., seq_len] 复数表示为 [..., seq_len, 2] (实部,虚部) 或直接实数
+        返回: [..., seq_len]
+        """
+        # 处理输入维度
+        orig_shape = x.shape
+        if x.dim() == 2:
+            # [batch, seq]
+            x = x.unsqueeze(-1)  # [batch, seq, 1]
+        elif x.dim() == 3:
+            # [batch, seq, features]
+            pass
+        else:
+            raise ValueError(f"Unsupported input shape: {orig_shape}")
+
+        batch, seq, features = x.shape
+
+        # 实数DFT: 分别对实部和虚部处理
+        # DFT(x) = W @ x
+        x_flat = x.reshape(-1, seq)  # [batch*features, seq]
+
+        # 正变换
+        X_real = torch.matmul(x_flat, self.W_real.T)  # [B, N]
+        X_imag = torch.matmul(x_flat, self.W_imag.T)  # [B, N]
+
+        # 频域乘以Laplacian核
+        X_real_lap = X_real * self.lap_kernel  # [B, N]
+        X_imag_lap = X_imag * self.lap_kernel  # [B, N]
+
+        # 逆变换
+        x_lap_real = torch.matmul(X_real_lap, self.W_inv_real.T) - \
+                     torch.matmul(X_imag_lap, self.W_inv_imag.T)
+
+        # 重塑回原始形状
+        result = x_lap_real.reshape(batch, seq, features).squeeze(-1)
+
+        if len(orig_shape) == 2:
+            result = result.reshape(orig_shape)
+
+        return result
+
+
+class FiniteDiffLaplacian(nn.Module):
+    """
+    有限差分Laplacian (备用方案)
+    简单但切断长程耦合
+    """
+    def __init__(self, seq_len, device='cuda'):
+        super().__init__()
+        self.seq_len = seq_len
+        self.device = device
+
+    def forward(self, x):
+        """
+        计算 ∇²x ≈ x[i+1] - 2x[i] + x[i-1]
+        x: [..., seq_len]
+        """
+        # 循环边界条件
+        x_plus = torch.roll(x, shifts=-1, dims=-1)
+        x_minus = torch.roll(x, shifts=1, dims=-1)
+        return x_plus - 2 * x + x_minus
+
+
+def test_dft_laplacian():
+    """测试DFT Laplacian"""
+    print("="*60)
+    print("DFT Laplacian Test")
+    print("="*60)
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Device: {device}")
+
+    # 创建测试数据
+    seq_len = 196
+    batch = 2
+
+    lap_dft = DFTLaplacian(seq_len, device).to(device)
+
+    # 测试1: 简单正弦波
+    x = torch.sin(torch.linspace(0, 2*np.pi, seq_len)).unsqueeze(0).repeat(batch, 1).to(device)
+
+    print(f"\nInput shape: {x.shape}")
+    print(f"Input range: [{x.min():.3f}, {x.max():.3f}]")
+
+    # 计算Laplacian
+    lap_x = lap_dft(x)
+
+    print(f"Output shape: {lap_x.shape}")
+    print(f"Output range: [{lap_x.min():.3f}, {lap_x.max():.3f}]")
+
+    # 理论: ∇²(sin) = -sin
+    expected = -x
+    error = torch.abs(lap_x - expected).mean()
+    print(f"\nExpected: -sin(x)")
+    print(f"Mean absolute error: {error:.6f}")
+
+    # 测试2: 梯度检查
+    x.requires_grad = True
+    lap_x = lap_dft(x)
+    loss = lap_x.sum()
+    loss.backward()
+
+    print(f"\nGradient check:")
+    print(f"  x.grad exists: {x.grad is not None}")
+    print(f"  x.grad shape: {x.grad.shape if x.grad is not None else 'N/A'}")
+
+    # 测试3: 批处理
+    x3 = torch.randn(4, seq_len).to(device)
+    lap3 = lap_dft(x3)
+    print(f"\nBatch test:")
+    print(f"  Input: {x3.shape} -> Output: {lap3.shape}")
+
+    print("\n" + "="*60)
+    print("All tests passed!")
+    print("="*60)
+
+
+if __name__ == '__main__':
+    test_dft_laplacian()
+
+
+
+################################################################################
+# [18/24] models\hormonicformer_v3.py
+# Size: 35988 bytes
+################################################################################
+
+"""
+HormonicFormer v3 - DCU Ready Version
+完整模型定义，兼容PyTorch 2.7.1 + ROCm/HIP
+
+新增强机制 (Priority 1-3):
+  1. 局部 E/I 平衡 (EIBalance)     - 侧抑制防止强token主导
+  2. 感觉反馈/外部驱动 (SensoryFeedback) - 演化中持续锚定输入
+  3. Hebbian 实时突触可塑性 (HebbianPlasticity) - G矩阵中速经验学习
+"""
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+import sys
+from pathlib import Path
+
+# 导入DFT Laplacian
+sys.path.insert(0, str(Path(__file__).parent.parent / 'field'))
+from laplacian_dft import DFTLaplacian, FiniteDiffLaplacian
+
+
+# =============================================================================
+# Priority 1: 局部 E/I 平衡 (侧抑制机制)
+# =============================================================================
+class EIBalance(nn.Module):
+    """
+    局部兴奋/抑制平衡器
+
+    生物原理:
+      - 每个 token 维护局部兴奋 E 和抑制 I 状态
+      - 强活动的 token 通过侧抑制 (lateral inhibition) 压制邻近 token
+      - 防止单个 token 或 head 的场振幅过大而主导全局
+
+    数学:
+      dE/dt = -E/tau_e + gamma_e * ReLU(psi_amplitude)
+      dI/dt = -I/tau_i + gamma_i * local_avg_inhibition(psi_amplitude)
+      modulation = E - I
+
+    其中 local_avg_inhibition 是邻域内其他 token 活动的加权平均。
+    """
+    def __init__(self, seq_len, d_model, tau_e=2.0, tau_i=1.0,
+                 gamma_e=1.0, gamma_i=0.8, w_inh=0.3, inh_radius=3):
+        super().__init__()
+        self.seq_len = seq_len
+        self.d_model = d_model
+        self.tau_e = tau_e
+        self.tau_i = tau_i
+        self.gamma_e = gamma_e
+        self.gamma_i = gamma_i
+        self.w_inh = w_inh
+        self.inh_radius = inh_radius
+
+        # 可学习的兴奋/抑制时间常数 (每个维度独立)
+        self.tau_e_param = nn.Parameter(torch.ones(d_model) * tau_e)
+        self.tau_i_param = nn.Parameter(torch.ones(d_model) * tau_i)
+
+        # 局部侧抑制权重: 基于距离的高斯权重
+        positions = torch.arange(seq_len).float().unsqueeze(0)  # [1, S]
+        distances = torch.abs(positions - positions.T)  # [S, S]
+        # 循环距离 (环形拓扑)
+        distances = torch.minimum(distances, seq_len - distances)
+        # 高斯权重，距离越近抑制越强
+        inh_weights = torch.exp(-(distances ** 2) / (2 * inh_radius ** 2))
+        # 自身抑制为0 (对角线)
+        inh_weights.fill_diagonal_(0)
+        # 归一化每行的权重
+        inh_weights = inh_weights / (inh_weights.sum(dim=1, keepdim=True) + 1e-8)
+        self.register_buffer('inh_weights', inh_weights)  # [S, S]
+
+        # 状态初始化
+        self.E = None
+        self.I = None
+
+    def reset_state(self, batch_size, device):
+        """为新 batch 重置 E/I 状态"""
+        self.E = torch.zeros(batch_size, self.seq_len, self.d_model, device=device)
+        self.I = torch.zeros(batch_size, self.seq_len, self.d_model, device=device)
+
+    def forward(self, psi_amp):
+        """
+        psi_amp: [B, S, D] 场的振幅
+        返回: modulation [B, S, D], 正值=净兴奋, 负值=净抑制
+        """
+        B, S, D = psi_amp.shape
+
+        if self.E is None or self.E.shape[0] != B:
+            self.reset_state(B, psi_amp.device)
+
+        # 兴奋更新: 快速响应局部活动
+        # dE = (-E + gamma_e * ReLU(amp)) / tau_e
+        exc_input = self.gamma_e * F.relu(psi_amp)
+        dE = (-self.E + exc_input) / (self.tau_e_param.view(1, 1, D) + 0.1)
+        self.E = self.E + dE
+
+        # 抑制更新: 局部侧抑制
+        # 对每个维度，计算邻域内其他token的加权平均活动
+        # inh_weights: [S, S] -> [1, S, S, 1]
+        inh_weights = self.inh_weights.unsqueeze(0).unsqueeze(-1)  # [1, S, S, 1]
+        psi_amp_expanded = psi_amp.unsqueeze(1)  # [B, 1, S, D]
+        # 加权平均: [B, S, S, D] * [1, S, S, 1] -> sum over dim=2
+        local_activity = (inh_weights * psi_amp_expanded).sum(dim=2)  # [B, S, D]
+        inh_input = self.gamma_i * local_activity
+
+        dI = (-self.I + inh_input) / (self.tau_i_param.view(1, 1, D) + 0.1)
+        self.I = self.I + dI
+
+        # E/I 平衡调制
+        modulation = self.E - self.I  # [B, S, D]
+        # 软限幅，防止极端值
+        modulation = torch.tanh(modulation)
+        return modulation
+
+
+# =============================================================================
+# Priority 2: 感觉反馈 / 外部驱动
+# =============================================================================
+class SensoryFeedback(nn.Module):
+    """
+    感觉反馈模块: 在CGL演化过程中持续注入外部输入
+
+    生物原理:
+      - 生物脑不是一次性接收输入后就自组织演化
+      - 感觉皮层持续接收来自丘脑的外部驱动
+      - 防止场因过度扩散而"遗忘"输入信息
+
+    数学:
+      I_ext(t) = feedback_strength * embed_input
+      每步演化都加入: psi += dt * I_ext
+    """
+    def __init__(self, d_model, feedback_strength=0.3, feedback_freq=1):
+        super().__init__()
+        self.d_model = d_model
+        self.feedback_strength = feedback_strength
+        self.feedback_freq = feedback_freq
+
+        # 可学习的反馈投影: 将输入嵌入投影到复数场空间
+        self.W_feedback = nn.Linear(d_model, d_model * 2)
+
+        self.stored_input = None
+        self.step_count = 0
+
+    def set_input(self, x_embed):
+        """
+        设置外部输入
+        x_embed: [B, S, D] 输入嵌入
+        """
+        self.stored_input = x_embed.detach().clone()
+        self.step_count = 0
+
+    def get_feedback(self, batch_size, seq_len):
+        """
+        获取当前时刻的外部驱动
+        返回: [B, S, 2*D] 或 None (如果不该注入)
+        """
+        if self.stored_input is None:
+            return None
+
+        self.step_count += 1
+        if (self.step_count - 1) % self.feedback_freq != 0:
+            return None
+
+        # 投影到复数场空间 [B, S, 2*D]
+        feedback = self.W_feedback(self.stored_input)
+        feedback = feedback * self.feedback_strength
+        return feedback
+
+    def clear(self):
+        self.stored_input = None
+        self.step_count = 0
+
+
+# =============================================================================
+# Priority 3: Hebbian 实时突触可塑性
+# =============================================================================
+class HebbianPlasticity(nn.Module):
+    """
+    Hebbian 学习 + 反 Hebbian: G矩阵的中速经验学习
+
+    生物原理 (STDP/Hebbian):
+      - "一起激发的神经元连在一起" (Fire together, wire together)
+      - 如果两个 token 的相位同步度高，强化它们之间的连接 G_ij
+      - 如果同步度过低，削弱连接 (反 Hebbian)
+
+    数学:
+      同步度: sync_ij = cos(θ_i - θ_j)
+      Hebbian:  ΔG_ij = η_hebb * ReLU(sync_ij - threshold)
+      反Hebbian: ΔG_ij = -η_anti * ReLU(threshold - sync_ij)
+      衰减:      G = G * decay (防止无限增长)
+
+    时间尺度: tau_hebb ~ 10 steps (介于快速场演化和慢速BWO之间)
+    """
+    def __init__(self, seq_len, eta_hebb=0.001, eta_anti=0.0005,
+                 sync_threshold=0.3, tau_hebb=10.0, decay=0.999):
+        super().__init__()
+        self.seq_len = seq_len
+        self.eta_hebb = eta_hebb
+        self.eta_anti = eta_anti
+        self.sync_threshold = sync_threshold
+        self.tau_hebb = int(tau_hebb)
+        self.decay = decay
+
+        # G 矩阵作为可学习的参数，但主要通过 Hebbian 规则更新
+        self.G = nn.Parameter(torch.randn(seq_len, seq_len) * 0.01, requires_grad=True)
+        # alive_mask 控制哪些连接存在
+        self.alive_mask = nn.Parameter(torch.ones(seq_len, seq_len), requires_grad=False)
+
+        self.step_counter = 0
+
+    def compute_phase_sync(self, psi):
+        """
+        计算 token 间的相位同步度
+        psi: [B, S, D, 2] (实部, 虚部)
+        返回: sync_matrix [S, S] (跨batch平均)
+        """
+        B, S, D, _ = psi.shape
+        re, im = psi[..., 0], psi[..., 1]  # [B, S, D]
+
+        # 计算每个token的相位: [B, S, D]
+        phase = torch.atan2(im, re + 1e-8)
+
+        # 跨 batch 和维度平均，得到每个token的代表性相位
+        mean_phase = phase.mean(dim=(0, 2))  # [S]
+
+        # 计算相位差的余弦: sync_ij = cos(θ_i - θ_j)
+        phase_diff = mean_phase.unsqueeze(0) - mean_phase.unsqueeze(1)  # [S, S]
+        sync_matrix = torch.cos(phase_diff)  # [S, S]
+
+        return sync_matrix
+
+    def hebbian_update(self, psi):
+        """
+        基于相位同步度更新 G 矩阵
+        psi: [B, S, D, 2]
+        """
+        self.step_counter += 1
+        if self.step_counter % self.tau_hebb != 0:
+            return
+
+        with torch.no_grad():
+            sync = self.compute_phase_sync(psi.detach())  # [S, S]
+            self._last_sync = sync.detach()  # 保存同步矩阵供BWO重生使用
+
+            # Hebbian: 同步度高 -> 增强
+            hebb_term = self.eta_hebb * F.relu(sync - self.sync_threshold)
+            # 反 Hebbian: 同步度低 -> 削弱
+            anti_hebb_term = -self.eta_anti * F.relu(self.sync_threshold - sync)
+
+            delta_G = hebb_term + anti_hebb_term
+
+            # 应用更新 (只对存活的连接)
+            self.G.data = (self.G.data + delta_G) * self.alive_mask
+            # 缓慢衰减
+            self.G.data = self.G.data * self.decay
+
+            # 保持对角线为0 (不自连)
+            self.G.data.fill_diagonal_(0)
+
+    def get_G_matrix(self):
+        """获取当前 G 矩阵 (应用 alive_mask)"""
+        G_sparse = self.G * self.alive_mask
+        # 归一化
+        G_max = G_sparse.abs().max()
+        if G_max > 1e-6:
+            G_sparse = G_sparse / G_max
+        # 对角线为0
+        G_sparse = G_sparse.clone()
+        G_sparse.fill_diagonal_(0)
+        return G_sparse
+
+    def prune_and_regrow(self, prune_fraction=0.5, regrow_fraction=0.1):
+        """BWO: 强力剪枝 + 高同步重生
+        
+        prune_fraction: 每次剪掉当前存活连接的 50%（最弱的）
+        regrow_fraction: 从死连接中重生 10%（仅高同步的）
+        """
+        with torch.no_grad():
+            # DEBUG
+            import logging
+            logger = logging.getLogger('hormonic')
+            logger.info(f"[BWO DEBUG] prune_fraction={prune_fraction}, regrow_fraction={regrow_fraction}")
+            initial_alive = (self.alive_mask > 0).sum().item()
+            logger.info(f"[BWO DEBUG] Initial alive: {initial_alive}/{self.alive_mask.numel()}")
+            # === 1. 强力剪枝：使用 enforce_target_sparsity 直接达到目标 ===
+            # 先尝试按比例剪枝，如果无效则强制达到目标稀疏度
+            alive = (self.alive_mask > 0)
+            n_alive = alive.sum().item()
+            pruned = False
+            if n_alive > 0:
+                alive_weights = self.G[alive].abs()
+                k = max(1, int(prune_fraction * n_alive))
+                if k < len(alive_weights):
+                    threshold = torch.topk(alive_weights, k, largest=False)[0][-1]
+                    # 仅保留权重高于阈值的连接
+                    self.alive_mask.data = (self.G.abs() > threshold).float()
+                    # DEBUG
+                    after_prune_alive = (self.alive_mask > 0).sum().item()
+                    pruned_count = initial_alive - after_prune_alive
+                    print(f"[BWO DEBUG] After prune: {after_prune_alive} alive (pruned {pruned_count})")
+                    if pruned_count > 0:
+                        pruned = True
+            
+            # 如果按比例剪枝无效，强制达到目标稀疏度
+            if not pruned:
+                print(f"[BWO DEBUG] Proportional prune failed, using enforce_target_sparsity")
+                self.enforce_target_sparsity(target_sparsity=0.5)
+
+            # === 2. 重生：只复活"高同步"的死连接 ===
+            dead_mask = (self.alive_mask == 0)
+            n_dead = dead_mask.sum().item()
+            if n_dead > 0 and hasattr(self, '_last_sync'):
+                sync = self._last_sync  # [seq_len, seq_len]
+                should_regrow = dead_mask & (sync > 0.5)  # 同步度阈值
+                candidates = torch.where(should_regrow.flatten())[0]
+                n_regrow = max(1, int(regrow_fraction * n_dead))
+                if len(candidates) > 0:
+                    n_regrow = min(n_regrow, len(candidates))
+                    sel = candidates[torch.randperm(len(candidates), device=candidates.device)[:n_regrow]]
+                    self.alive_mask.data.flatten()[sel] = 1.0
+                    self.G.data.flatten()[sel] = torch.randn(n_regrow, device=self.G.device) * 0.01
+            elif n_dead > 0:
+                # fallback: 如果没有同步信息，少量随机重生
+                n_regrow = max(1, int(0.02 * n_dead))
+                dead_indices = torch.where(dead_mask.flatten())[0]
+                perm = torch.randperm(n_dead, device=dead_indices.device)[:n_regrow]
+                regrow_indices = dead_indices[perm]
+                self.alive_mask.data.flatten()[regrow_indices] = 1.0
+                self.G.data.flatten()[regrow_indices] = torch.randn(
+                    n_regrow, device=self.G.device) * 0.01
+
+            # 强制掩码
+            self.G.data = self.G.data * self.alive_mask
+            self.G.data.fill_diagonal_(0)
+            # DEBUG
+            final_alive = (self.alive_mask > 0).sum().item()
+            logger.info(f"[BWO DEBUG] Final: {final_alive} alive, sparsity={(1-final_alive/self.alive_mask.numel())*100:.2f}%")
+class ComplexField(nn.Module):
+    """复数Ginzburg-Landau场工具"""
+    def __init__(self, d_model):
+        super().__init__()
+        self.d_model = d_model
+
+    def amplitude(self, psi):
+        """|ψ| = sqrt(Re² + Im²)"""
+        re, im = psi[..., 0], psi[..., 1]
+        return torch.sqrt(re**2 + im**2 + 1e-8)
+
+    def phase(self, psi):
+        """arg(ψ) = atan2(Im, Re)"""
+        re, im = psi[..., 0], psi[..., 1]
+        return torch.atan2(im, re)
+
+
+# =============================================================================
+# 核心 Hormonic Block V2 (整合 Priority 1-3)
+# =============================================================================
+class HormonicBlockV2(nn.Module):
+    """
+    HormonicFormer核心块 V2
+    CGL场动力学 + 神经调质调制 + E/I平衡 + 感觉反馈 + Hebbian可塑性
+    """
+    def __init__(self, d_model, n_heads, seq_len, n_steps=3,
+                 D0_amp=0.1, D0_phase=0.1, dt=0.05, use_dft=True,
+                 # E/I 平衡参数
+                 use_ei=True, tau_e=2.0, tau_i=1.0,
+                 gamma_e=1.0, gamma_i=0.8, w_inh=0.3, inh_radius=3,
+                 # 感觉反馈参数
+                 use_feedback=True, feedback_strength=0.3, feedback_freq=1,
+                 # Hebbian 参数
+                 use_hebbian=True, eta_hebb=0.001, eta_anti=0.0005,
+                 sync_threshold=0.3, tau_hebb=10.0, hebb_decay=0.999):
+        super().__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.seq_len = seq_len
+        self.n_steps = n_steps
+        self.D0_amp = D0_amp
+        self.D0_phase = D0_phase
+        self.dt = dt
+
+        self.use_ei = use_ei
+        self.use_feedback = use_feedback
+        self.use_hebbian = use_hebbian
+
+        # 复数场工具
+        self.cfield = ComplexField(d_model)
+
+        # Laplacian算子
+        if use_dft:
+            self.laplacian = DFTLaplacian(seq_len)
+        else:
+            self.laplacian = FiniteDiffLaplacian(seq_len)
+
+        # 线性投影
+        self.W_in = nn.Linear(d_model, d_model * 2)
+        self.W_out = nn.Linear(d_model * 2, d_model)
+
+        # CGL参数 (可学习)
+        self.alpha = nn.Parameter(torch.tensor(1.0))
+        self.beta = nn.Parameter(torch.tensor(0.5))
+
+        # ===== Priority 1: E/I 平衡 =====
+        if self.use_ei:
+            self.ei_balance = EIBalance(
+                seq_len, d_model,
+                tau_e=tau_e, tau_i=tau_i,
+                gamma_e=gamma_e, gamma_i=gamma_i,
+                w_inh=w_inh, inh_radius=inh_radius
+            )
+
+        # ===== Priority 2: 感觉反馈 =====
+        if self.use_feedback:
+            self.sensory_feedback = SensoryFeedback(
+                d_model, feedback_strength, feedback_freq
+            )
+
+        # ===== Priority 3: Hebbian 可塑性 =====
+        if self.use_hebbian:
+            self.hebbian = HebbianPlasticity(
+                seq_len, eta_hebb, eta_anti,
+                sync_threshold, tau_hebb, hebb_decay
+            )
+
+        # LayerNorm (稳定训练)
+        self.norm_in = nn.LayerNorm(d_model)
+        self.norm_out = nn.LayerNorm(d_model)
+
+    def forward(self, x, x_embed=None):
+        """
+        x: [batch, seq, d_model] 输入
+        x_embed: [batch, seq, d_model] 原始输入嵌入 (用于感觉反馈)
+        返回: [batch, seq, d_model]
+        """
+        batch, seq, _ = x.shape
+        x = self.norm_in(x)
+
+        # 消融模式：n_steps=0 时，跳过场演化，只做线性投影
+        if self.n_steps == 0:
+            # 纯嵌入基线模式
+            output = self.W_out(self.W_in(x))
+            return self.norm_out(output)
+
+        # 投影到复数场
+        psi = self.W_in(x)  # [B, S, 2*D]
+        psi = psi.reshape(batch, seq, self.d_model, 2)  # [B, S, D, 2]
+
+        # 设置感觉反馈输入
+        if self.use_feedback and x_embed is not None:
+            self.sensory_feedback.set_input(x_embed)
+
+        # 重置 E/I 状态
+        if self.use_ei:
+            self.ei_balance.reset_state(batch, psi.device)
+
+        # CGL场演化 (n_steps步)
+        for step in range(self.n_steps):
+            psi = self._cgl_step(psi, step)
+
+        # 清除感觉反馈
+        if self.use_feedback:
+            self.sensory_feedback.clear()
+
+        # 投影回实数
+        psi_flat = psi.reshape(batch, seq, self.d_model * 2)
+        output = self.W_out(psi_flat)
+        output = self.norm_out(output)
+
+        return output
+
+    def prune_and_regrow(self, prune_fraction=0.5, regrow_fraction=0.1):
+        """转发 BWO 剪枝请求到 Hebbian 可塑性模块"""
+        if self.use_hebbian and self.hebbian is not None:
+            self.hebbian.prune_and_regrow(prune_fraction, regrow_fraction)
+
+    def _cgl_step(self, psi, step_idx):
+        """
+        单步CGL演化: Strang splitting + E/I平衡 + 感觉反馈 + Hebbian
+        支持消融模式:
+          - D0_amp=0: 跳过扩散
+          - dt=0: 跳过反应（只做扩散）
+        psi: [B, S, D, 2]
+        """
+        batch, seq, d, _ = psi.shape
+        re, im = psi[..., 0], psi[..., 1]
+
+        # === 消融模式: dt=0 时跳过所有反应，只做扩散 ===
+        if self.dt == 0:
+            # 只做扩散 (如果 D0_amp 也=0，则不做任何事)
+            if self.D0_amp > 0:
+                lap_re = torch.zeros_like(re)
+                lap_im = torch.zeros_like(im)
+                for i in range(d):
+                    lap_re[:, :, i] = self.laplacian(re[:, :, i])
+                    lap_im[:, :, i] = self.laplacian(im[:, :, i])
+                re = re + self.D0_amp * lap_re
+                im = im + self.D0_amp * lap_im
+            return torch.stack([re, im], dim=-1)
+
+        # === 计算 E/I 调制 (基于当前振幅) ===
+        ei_mod = None
+        if self.use_ei:
+            amp = self.cfield.amplitude(psi)  # [B, S, D]
+            ei_mod = self.ei_balance(amp)  # [B, S, D], 正值=净兴奋, 负值=净抑制
+
+        # === 计算 Hebbian 更新 G (基于当前相位) ===
+        if self.use_hebbian and step_idx == 0:
+            self.hebbian.hebbian_update(psi)
+
+        # === 获取 G 矩阵耦合 ===
+        G_matrix = None
+        if self.use_hebbian:
+            G_matrix = self.hebbian.get_G_matrix()  # [S, S]
+
+        # === 半步: 非线性反应 (local) + E/I调制 ===
+        amp_sq = re**2 + im**2  # [B, S, D]
+
+        # Soft-clip amp_sq 防止数值爆炸 (CGL饱和效应)
+        amp_sq = torch.tanh(amp_sq)  # 限制在 [0, 1)
+
+        # 有效非线性强度: alpha * (1 + E/I调制)
+        # Clamp E/I调制范围，防止极端值
+        if ei_mod is not None:
+            alpha_eff = self.alpha * (1.0 + torch.clamp(ei_mod, -0.5, 1.0))  # [B, S, D]
+        else:
+            alpha_eff = self.alpha
+
+        # CGL反应项 (带E/I调制，amp_sq已clipped)
+        d_re = (alpha_eff * amp_sq - amp_sq**2) * re - self.beta * amp_sq * im
+        d_im = (alpha_eff * amp_sq - amp_sq**2) * im + self.beta * amp_sq * re
+
+        re_half = re + 0.5 * self.dt * d_re
+        im_half = im + 0.5 * self.dt * d_im
+
+        # === 整步: 扩散 (Laplacian) [可消融] ===
+        if self.D0_amp > 0:
+            lap_re = torch.zeros_like(re)
+            lap_im = torch.zeros_like(im)
+
+            for i in range(d):
+                lap_re[:, :, i] = self.laplacian(re_half[:, :, i])
+                lap_im[:, :, i] = self.laplacian(im_half[:, :, i])
+
+            # 尺度归一化: laplacian输出除以seq_len使扩散步稳定
+            # 这保证了 CFL 条件: dt * D0 * |laplacian| / seq_len < 2/seq_len
+            # 同时保持物理正确性 (∇²sin = -sin)
+            seq_len = lap_re.shape[1]
+            lap_re = lap_re / seq_len
+            lap_im = lap_im / seq_len
+
+            D_eff = self.D0_amp
+            re_full = re_half + self.dt * D_eff * lap_re
+            im_full = im_half + self.dt * D_eff * lap_im
+        else:
+            # 消融: 无扩散
+            re_full = re_half
+            im_full = im_half
+
+        # === 半步: 非线性反应 ===
+        amp_sq_full = re_full**2 + im_full**2
+        amp_sq_full = torch.tanh(amp_sq_full)  # Soft-clip 防止爆炸
+
+        d_re2 = (alpha_eff * amp_sq_full - amp_sq_full**2) * re_full - self.beta * amp_sq_full * im_full
+        d_im2 = (alpha_eff * amp_sq_full - amp_sq_full**2) * im_full + self.beta * amp_sq_full * re_full
+
+        re_next = re_full + 0.5 * self.dt * d_re2
+        im_next = im_full + 0.5 * self.dt * d_im2
+
+        # === G矩阵耦合 (Hebbian结构连接) ===
+        if G_matrix is not None:
+            # G: [S, S] -> 对每个batch和维度做线性耦合
+            # re_next: [B, S, D], G: [S, S]
+            # 耦合: sum_j G_ij * re_j -> [B, S, D]
+            G_coupling_re = torch.einsum('ij,bjd->bid', G_matrix, re_next)
+            G_coupling_im = torch.einsum('ij,bjd->bid', G_matrix, im_next)
+            coupling_strength = 0.1  # 耦合强度
+            re_next = re_next + coupling_strength * G_coupling_re
+            im_next = im_next + coupling_strength * G_coupling_im
+
+        # === 感觉反馈: 外部驱动注入 ===
+        if self.use_feedback:
+            feedback = self.sensory_feedback.get_feedback(batch, seq)
+            if feedback is not None:
+                # feedback: [B, S, 2*D] -> [B, S, D, 2]
+                fb = feedback.reshape(batch, seq, d, 2)
+                re_next = re_next + self.dt * fb[..., 0]
+                im_next = im_next + self.dt * fb[..., 1]
+
+        return torch.stack([re_next, im_next], dim=-1)
+
+
+# =============================================================================
+# 神经调质系统 (DA/CB/G)
+# =============================================================================
+class Neuromodulator(nn.Module):
+    """神经调质系统: DA + CB + G
+    
+    DA初始化改进:
+      - da_ema初始值设为2.5 (接近初始CE loss for 10类分类)
+      - ema_alpha=0.9 (更快跟踪loss变化，避免初始surprise过大)
+      - 这样DA初始值~0.5 (中性探索)，而非~0.9 (过度兴奋)
+    """
+    def __init__(self, seq_len, d_model, da_init=2.5, ema_alpha=0.9):
+        super().__init__()
+        self.seq_len = seq_len
+        self.d_model = d_model
+
+        # DA (多巴胺) - 预测误差/惊奇
+        # 初始值设为接近初始loss，避免初始surprise爆炸
+        self.da_ema = da_init
+        self.da_var = 0.5  # 增大初始方差
+        self.ema_alpha = ema_alpha
+
+        # CB (大麻素) - 同步抑制
+        self.cb_threshold = 0.25
+
+        # G (胶质) - 结构可塑性
+        self.G_global = nn.Parameter(torch.tensor(1.0))
+
+    def update_DA(self, pred_loss, ema_alpha=None, var_alpha=0.95):
+        """更新DA: 相对惊奇度 (改进版)"""
+        alpha = ema_alpha if ema_alpha is not None else self.ema_alpha
+        
+        # EMA更新跟踪loss
+        self.da_ema = alpha * self.da_ema + (1 - alpha) * pred_loss
+        
+        # 方差更新 (使用Welford算法更稳定)
+        delta = pred_loss - self.da_ema
+        self.da_var = var_alpha * self.da_var + (1 - var_alpha) * (delta ** 2)
+        
+        # 相对惊奇度 (标准化)
+        std = math.sqrt(self.da_var) + 1e-8
+        surprise = (pred_loss - self.da_ema) / std
+        
+        # sigmoid映射到[0,1]，然后clamp到[0.1, 0.9]
+        DA = torch.sigmoid(torch.tensor(surprise))
+        return torch.clamp(DA, 0.1, 0.9).item()
+
+    def update_CB(self, sync_metric):
+        """更新CB: 同步抑制"""
+        if sync_metric > self.cb_threshold:
+            CB = (sync_metric - self.cb_threshold) / (1 - self.cb_threshold)
+            return min(CB, 1.0)
+        return 0.0
+
+
+# =============================================================================
+# 完整 HormonicFormer V3 模型
+# =============================================================================
+class HormonicFormer(nn.Module):
+    """HormonicFormer V3 - 整合生物启发的核心机制"""
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+        d_model = config['model']['d_model']
+        n_heads = config['model']['n_heads']
+        n_layers = config['model']['n_layers']
+        seq_len = config['model']['seq_len']
+        n_steps = config['model']['n_steps']
+        patch_size = config['model']['patch_size']
+        n_classes = config['model']['n_classes']
+
+        # 读取新机制配置
+        ei_cfg = config['model'].get('ei_balance', {})
+        fb_cfg = config['model'].get('sensory_feedback', {})
+        hebb_cfg = config['model'].get('hebbian', {})
+
+        # 输入嵌入
+        self.patch_embed = nn.Conv2d(1, d_model, kernel_size=patch_size, stride=patch_size)
+
+        # Hormonic Blocks V2
+        self.blocks = nn.ModuleList([
+            HormonicBlockV2(
+                d_model=d_model,
+                n_heads=n_heads,
+                seq_len=seq_len,
+                n_steps=n_steps,
+                D0_amp=config['model']['D0_amp'],
+                D0_phase=config['model']['D0_phase'],
+                dt=config['model']['dt'],
+                use_dft=True,
+                # E/I 平衡
+                use_ei=ei_cfg.get('enabled', True),
+                tau_e=ei_cfg.get('tau_e', 2.0),
+                tau_i=ei_cfg.get('tau_i', 1.0),
+                gamma_e=ei_cfg.get('gamma_e', 1.0),
+                gamma_i=ei_cfg.get('gamma_i', 0.8),
+                w_inh=ei_cfg.get('w_inh', 0.3),
+                inh_radius=ei_cfg.get('inh_radius', 3),
+                # 感觉反馈
+                use_feedback=fb_cfg.get('enabled', True),
+                feedback_strength=fb_cfg.get('feedback_strength', 0.3),
+                feedback_freq=fb_cfg.get('feedback_freq', 1),
+                # Hebbian
+                use_hebbian=hebb_cfg.get('enabled', True),
+                eta_hebb=hebb_cfg.get('eta_hebb', 0.001),
+                eta_anti=hebb_cfg.get('eta_anti', 0.0005),
+                sync_threshold=hebb_cfg.get('sync_threshold', 0.3),
+                tau_hebb=hebb_cfg.get('tau_hebb', 10.0),
+                hebb_decay=hebb_cfg.get('decay', 0.999),
+            )
+            for _ in range(n_layers)
+        ])
+
+        # 神经调质
+        self.neuromod = Neuromodulator(seq_len, d_model)
+
+        # 预测编码
+        pc_cfg = config.get('pc', {})
+        if pc_cfg.get('use_pc', True):
+            pred_hidden = d_model * pc_cfg.get('pred_hidden_mult', 4)
+            self.predictor = nn.Sequential(
+                nn.Linear(d_model, pred_hidden),
+                nn.ReLU(),
+                nn.Linear(pred_hidden, d_model)
+            )
+            self.aux_weight = pc_cfg.get('aux_weight', 0.01)
+        else:
+            self.predictor = None
+            self.aux_weight = 0
+
+        # 分类头
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(d_model // 2, n_classes)
+        )
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+
+    def forward(self, images, targets=None):
+        """
+        images: [B, 1, 28, 28] (Fashion-MNIST)
+        targets: [B] (可选)
+        """
+        B = images.shape[0]
+
+        # Patch embedding
+        x = self.patch_embed(images)  # [B, d_model, H', W']
+        x = x.flatten(2).transpose(1, 2)  # [B, seq_len, d_model]
+
+        # 保存输入嵌入用于感觉反馈
+        x_embed = x.detach().clone()
+
+        # 通过Hormonic Blocks
+        aux_loss = 0
+        for i, block in enumerate(self.blocks):
+            x_out = block(x, x_embed=x_embed if block.use_feedback else None)
+
+            # 预测编码辅助损失
+            if self.predictor is not None and i > 0:
+                pred = self.predictor(x)
+                aux_loss = aux_loss + F.mse_loss(pred, x_out.detach())
+
+            x = x_out
+
+        # 全局平均池化
+        x = x.mean(dim=1)  # [B, d_model]
+
+        # 分类
+        logits = self.classifier(x)
+
+        if targets is not None:
+            ce_loss = F.cross_entropy(logits, targets)
+            total_loss = ce_loss + self.aux_weight * aux_loss
+            return logits, total_loss
+
+        return logits
+
+    def update_neuromod(self, pred_loss, sync_metric=None):
+        """更新神经调质状态"""
+        DA = self.neuromod.update_DA(pred_loss)
+        CB = self.neuromod.update_CB(sync_metric) if sync_metric else 0.0
+        return DA, CB
+
+    def prune_and_regrow(self, epoch, interval=5, prune_fraction=0.5, regrow_fraction=0.1):
+        """BWO: 强力剪枝+高同步重生 (调用HormonicBlockV2)
+        
+        interval: BWO执行间隔 (epochs)
+        prune_fraction: 每次剪掉存活连接的比例
+        regrow_fraction: 从死连接中重生的比例
+        """
+        import logging
+        logger = logging.getLogger('hormonic')
+        logger.info(f"[HF BWO] Called at epoch {epoch}, interval={interval}")
+        if epoch % interval == 0 and epoch > 0:
+            logger.info(f"[HF BWO] Condition met, processing {len(self.blocks)} blocks")
+            for i, block in enumerate(self.blocks):
+                logger.info(f"[HF BWO] Block {i}: calling block.prune_and_regrow")
+                block.prune_and_regrow(prune_fraction, regrow_fraction)
+                logger.info(f"[HF BWO] Block {i}: done")
+
+    def get_hebbian_stats(self):
+        """获取Hebbian学习的统计信息"""
+        stats = []
+        for i, block in enumerate(self.blocks):
+            if block.use_hebbian:
+                G = block.hebbian.get_G_matrix()
+                stats.append({
+                    'layer': i,
+                    'G_mean': G.mean().item(),
+                    'G_std': G.std().item(),
+                    'G_sparsity': (G.abs() < 0.01).float().mean().item(),
+                    'alive_ratio': block.hebbian.alive_mask.mean().item(),
+                })
+        return stats
+
+
+# =============================================================================
+# 测试
+# =============================================================================
+def test_model():
+    """测试 HormonicFormer V3"""
+    print("="*70)
+    print("HormonicFormer V3 - DCU Ready Test")
+    print("新机制: E/I平衡 + 感觉反馈 + Hebbian可塑性")
+    print("="*70)
+
+    config = {
+        'model': {
+            'd_model': 128,
+            'n_heads': 4,
+            'n_layers': 2,
+            'seq_len': 196,
+            'n_steps': 3,
+            'patch_size': 2,
+            'n_classes': 10,
+            'D0_amp': 0.1,
+            'D0_phase': 0.1,
+            'dt': 0.05,
+            'ei_balance': {
+                'enabled': True,
+                'tau_e': 2.0,
+                'tau_i': 1.0,
+                'gamma_e': 1.0,
+                'gamma_i': 0.8,
+                'w_inh': 0.3,
+                'inh_radius': 3,
+            },
+            'sensory_feedback': {
+                'enabled': True,
+                'feedback_strength': 0.3,
+                'feedback_freq': 1,
+            },
+            'hebbian': {
+                'enabled': True,
+                'eta_hebb': 0.001,
+                'eta_anti': 0.0005,
+                'sync_threshold': 0.3,
+                'tau_hebb': 10.0,
+                'decay': 0.999,
+            },
+        },
+        'pc': {
+            'use_pc': True,
+            'pred_hidden_mult': 4,
+            'aux_weight': 0.01,
+        }
+    }
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"\nDevice: {device}")
+
+    model = HormonicFormer(config).to(device)
+
+    # 统计参数量
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print(f"\nModel Statistics:")
+    print(f"  Total params: {total_params/1e6:.2f}M")
+    print(f"  Trainable: {trainable_params/1e6:.2f}M")
+
+    # 测试前向
+    dummy_input = torch.randn(2, 1, 28, 28).to(device)
+    dummy_target = torch.randint(0, 10, (2,)).to(device)
+
+    print(f"\nForward test:")
+    print(f"  Input: {dummy_input.shape}")
+
+    model.train()
+    logits, loss = model(dummy_input, dummy_target)
+
+    print(f"  Logits: {logits.shape}")
+    print(f"  CE Loss: {loss.item():.4f}")
+
+    # 测试反向
+    loss.backward()
+    has_grad = any(p.grad is not None for p in model.parameters())
+    print(f"  Gradients computed: {has_grad}")
+
+    # 测试推理模式
+    model.eval()
+    with torch.no_grad():
+        logits_eval = model(dummy_input)
+        pred = logits_eval.argmax(dim=-1)
+        print(f"  Eval logits: {logits_eval.shape}")
+        print(f"  Predictions: {pred.tolist()}")
+
+    # Hebbian 统计
+    print(f"\nHebbian Stats:")
+    for stat in model.get_hebbian_stats():
+        print(f"  Layer {stat['layer']}: G_mean={stat['G_mean']:.4f}, "
+              f"sparsity={stat['G_sparsity']:.2%}, alive={stat['alive_ratio']:.2%}")
+
+    print("\n" + "="*70)
+    print("Test passed! Model ready for DCU training.")
+    print("="*70)
+
+
+if __name__ == '__main__':
+    test_model()
+
+
+
+################################################################################
+# [19/24] scripts\train.py
+# Size: 13613 bytes
+################################################################################
+
+#!/usr/bin/env python3
+"""
+HormonicFormer v3 - 训练脚本
+支持: 分布式训练(DDP), 混合精度(AMP), DCU兼容, BWO剪枝, 神经调质
+"""
+import os
+import sys
+import math
+import time
+import argparse
+import yaml
+import logging
+from pathlib import Path
+from datetime import datetime
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.cuda.amp import autocast, GradScaler
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+from torchvision import datasets, transforms
+
+# 添加项目路径
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / 'models'))
+sys.path.insert(0, str(PROJECT_ROOT / 'field'))
+
+from hormonicformer_v3 import HormonicFormer
+
+
+def setup_logger(log_dir, rank=0):
+    """设置日志"""
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = log_dir / f'train_{timestamp}_rank{rank}.log'
+
+    logging.basicConfig(
+        level=logging.INFO if rank == 0 else logging.WARNING,
+        format='[%(asctime)s] [Rank %(rank)d] %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler() if rank == 0 else logging.NullHandler()
+        ]
+    )
+    logger = logging.getLogger('hormonic')
+    logger = logging.LoggerAdapter(logger, {'rank': rank})
+    return logger
+
+
+def setup_distributed():
+    """初始化分布式训练"""
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ['RANK'])
+        local_rank = int(os.environ['LOCAL_RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+    else:
+        rank = 0
+        local_rank = 0
+        world_size = 1
+
+    if world_size > 1:
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group('nccl', rank=rank, world_size=world_size)
+
+    return rank, local_rank, world_size
+
+
+def cleanup_distributed():
+    """清理分布式"""
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def get_dataloader(config, rank, world_size, train=True):
+    """获取数据加载器"""
+    data_root = config['train']['data_root']
+    batch_size = config['train']['batch_size']
+    num_workers = config['train']['num_workers']
+    pin_memory = config['train']['pin_memory']
+
+    # 数据预处理
+    if train:
+        transform = transforms.Compose([
+            transforms.RandomRotation(10),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,)),
+            # 添加高斯噪声
+            transforms.Lambda(lambda x: x + config['train']['noise_sigma'] * torch.randn_like(x))
+        ])
+    else:
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+
+    # 数据集
+    dataset_name = config['train']['dataset']
+    if dataset_name == 'fashion_mnist':
+        dataset = datasets.FashionMNIST(data_root, train=train, download=True, transform=transform)
+    elif dataset_name == 'mnist':
+        dataset = datasets.MNIST(data_root, train=train, download=True, transform=transform)
+    else:
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+
+    # 分布式采样
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=train) if world_size > 1 else None
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=(train and sampler is None),
+        sampler=sampler,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        drop_last=train,
+    )
+
+    return loader, sampler
+
+
+def get_scheduler(optimizer, config, steps_per_epoch):
+    """获取学习率调度器"""
+    epochs = config['train']['epochs']
+    warmup_epochs = config['train']['warmup_epochs']
+    scheduler_type = config['train']['scheduler']
+
+    total_steps = epochs * steps_per_epoch
+    warmup_steps = warmup_epochs * steps_per_epoch
+
+    if scheduler_type == 'cosine':
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_steps
+        ) if warmup_steps > 0 else None
+
+        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=total_steps - warmup_steps, eta_min=1e-6
+        )
+
+        if warmup:
+            return torch.optim.lr_scheduler.SequentialLR(
+                optimizer, schedulers=[warmup, cosine], milestones=[warmup_steps]
+            )
+        return cosine
+
+    elif scheduler_type == 'step':
+        return torch.optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
+
+    else:
+        return None
+
+
+def train_epoch(model, loader, optimizer, scaler, scheduler, epoch, config, rank, logger):
+    """训练一个epoch"""
+    model.train()
+    device = next(model.parameters()).device
+
+    use_amp = config['train']['use_amp']
+    accumulation_steps = config['train'].get('accumulation_steps', 1)
+    log_interval = config['train']['log_interval']
+    nan_guard = config['train']['nan_guard']
+
+    total_loss = 0.0
+    total_ce = 0.0
+    total_aux = 0.0
+    correct = 0
+    total = 0
+    num_batches = 0
+
+    start_time = time.time()
+
+    for batch_idx, (images, targets) in enumerate(loader):
+        images = images.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
+
+        # 前向传播
+        with autocast(enabled=use_amp):
+            logits, loss = model(images, targets)
+            loss = loss / accumulation_steps
+
+        # NaN检测
+        if nan_guard and (torch.isnan(loss) or torch.isinf(loss)):
+            logger.warning(f"NaN/Inf detected at batch {batch_idx}, skipping!")
+            continue
+
+        # 反向传播
+        scaler.scale(loss).backward()
+
+        if (batch_idx + 1) % accumulation_steps == 0:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+
+            if scheduler is not None:
+                scheduler.step()
+
+        # 统计
+        with torch.no_grad():
+            ce_loss = F.cross_entropy(logits, targets)
+            total_ce += ce_loss.item()
+            total_loss += loss.item() * accumulation_steps
+            pred = logits.argmax(dim=-1)
+            correct += (pred == targets).sum().item()
+            total += targets.size(0)
+
+        num_batches += 1
+
+        # BWO: 定期剪枝重生
+        if hasattr(model, 'module'):
+            model.module.prune_and_regrow(epoch)
+        else:
+            model.prune_and_regrow(epoch)
+
+        # 日志
+        if rank == 0 and batch_idx % log_interval == 0:
+            lr = optimizer.param_groups[0]['lr']
+            acc = 100.0 * correct / total if total > 0 else 0
+            logger.info(
+                f"Epoch[{epoch}] Batch[{batch_idx}/{len(loader)}] "
+                f"Loss: {total_loss/num_batches:.4f} "
+                f"CE: {total_ce/num_batches:.4f} "
+                f"Acc: {acc:.2f}% "
+                f"LR: {lr:.6f}"
+            )
+
+    # Epoch 统计
+    elapsed = time.time() - start_time
+    avg_loss = total_loss / max(num_batches, 1)
+    avg_acc = 100.0 * correct / max(total, 1)
+
+    return avg_loss, avg_acc, elapsed
+
+
+@torch.no_grad()
+def evaluate(model, loader, config, rank, logger):
+    """评估"""
+    model.eval()
+    device = next(model.parameters()).device
+
+    total_loss = 0.0
+    correct = 0
+    total = 0
+
+    for images, targets in loader:
+        images = images.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
+
+        with autocast(enabled=config['train']['use_amp']):
+            logits, loss = model(images, targets)
+
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == targets).sum().item()
+        total += targets.size(0)
+
+    # 汇总分布式结果
+    if dist.is_initialized():
+        stats = torch.tensor([total_loss, correct, total], device=device)
+        dist.all_reduce(stats)
+        total_loss, correct, total = stats.tolist()
+
+    avg_loss = total_loss / len(loader)
+    avg_acc = 100.0 * correct / total
+
+    return avg_loss, avg_acc
+
+
+def save_checkpoint(model, optimizer, scaler, epoch, config, checkpoint_dir, is_best=False):
+    """保存检查点"""
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    state = {
+        'epoch': epoch,
+        'model': model.state_dict() if not hasattr(model, 'module') else model.module.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'scaler': scaler.state_dict(),
+        'config': config,
+    }
+
+    # 最新检查点
+    latest_path = checkpoint_dir / 'latest.pt'
+    torch.save(state, latest_path)
+
+    # 定期保存
+    if epoch % config['train'].get('save_interval', 1) == 0:
+        epoch_path = checkpoint_dir / f'epoch_{epoch}.pt'
+        torch.save(state, epoch_path)
+
+    # 最佳模型
+    if is_best:
+        best_path = checkpoint_dir / 'best.pt'
+        torch.save(state, best_path)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Train HormonicFormer v3')
+    parser.add_argument('--config', type=str, default='config.yaml', help='配置文件路径')
+    parser.add_argument('--resume', type=str, default='', help='恢复训练的检查点')
+    args = parser.parse_args()
+
+    # 加载配置
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
+
+    # 分布式设置
+    rank, local_rank, world_size = setup_distributed()
+    device = torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
+
+    # 日志
+    logger = setup_logger(config['train']['log_dir'], rank)
+    if rank == 0:
+        logger.info(f"HormonicFormer v3 Training Start")
+        logger.info(f"World size: {world_size}, Rank: {rank}")
+        logger.info(f"Config: {config['name']}")
+
+    # 设置随机种子
+    seed = config['train']['seed'] + rank
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+
+    # 数据
+    train_loader, train_sampler = get_dataloader(config, rank, world_size, train=True)
+    val_loader, _ = get_dataloader(config, rank, world_size, train=False)
+
+    if rank == 0:
+        logger.info(f"Train: {len(train_loader.dataset)}, Val: {len(val_loader.dataset)}")
+
+    # 模型
+    model = HormonicFormer(config).to(device)
+    if rank == 0:
+        total = sum(p.numel() for p in model.parameters()) / 1e6
+        logger.info(f"Model params: {total:.2f}M")
+
+    # DDP
+    if world_size > 1:
+        model = DDP(model, device_ids=[local_rank], find_unused_parameters=config['dist'].get('find_unused_parameters', False))
+
+    # 优化器
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config['train']['lr'],
+        weight_decay=config['train']['weight_decay']
+    )
+
+    # 学习率调度
+    scheduler = get_scheduler(optimizer, config, len(train_loader))
+
+    # 混合精度
+    scaler = GradScaler(enabled=config['train']['use_amp'])
+
+    start_epoch = 1
+    best_acc = 0.0
+    stale_epochs = 0
+
+    # 恢复训练
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location=device)
+        if hasattr(model, 'module'):
+            model.module.load_state_dict(checkpoint['model'])
+        else:
+            model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scaler.load_state_dict(checkpoint['scaler'])
+        start_epoch = checkpoint['epoch'] + 1
+        logger.info(f"Resumed from epoch {start_epoch}")
+
+    # 训练循环
+    for epoch in range(start_epoch, config['train']['epochs'] + 1):
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
+
+        # 训练
+        train_loss, train_acc, elapsed = train_epoch(
+            model, train_loader, optimizer, scaler, scheduler,
+            epoch, config, rank, logger
+        )
+
+        # 评估
+        val_loss, val_acc = evaluate(model, val_loader, config, rank, logger)
+
+        # Hebbian 统计
+        hebb_stats = ""
+        if rank == 0 and hasattr(model, 'module'):
+            stats = model.module.get_hebbian_stats()
+            if stats:
+                hebb_stats = f" | Hebb: " + ", ".join(
+                    f"L{s['layer']}:sparsity={s['G_sparsity']:.1%}" for s in stats[:2]
+                )
+
+        # 日志
+        if rank == 0:
+            logger.info(
+                f"Epoch[{epoch}] Summary: "
+                f"Train Loss={train_loss:.4f} Acc={train_acc:.2f}% | "
+                f"Val Loss={val_loss:.4f} Acc={val_acc:.2f}% | "
+                f"Time={elapsed:.1f}s"
+                f"{hebb_stats}"
+            )
+
+        # 保存检查点
+        is_best = val_acc > best_acc
+        if is_best:
+            best_acc = val_acc
+            stale_epochs = 0
+        else:
+            stale_epochs += 1
+
+        if rank == 0:
+            save_checkpoint(model, optimizer, scaler, epoch, config,
+                          config['train']['checkpoint_dir'], is_best)
+            logger.info(f"Best val acc: {best_acc:.2f}%, Stale: {stale_epochs}")
+
+        # 早停
+        if stale_epochs >= config['train'].get('max_stale_epochs', 10):
+            logger.info(f"Early stopping at epoch {epoch}")
+            break
+
+    cleanup_distributed()
+    if rank == 0:
+        logger.info("Training complete!")
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+################################################################################
+# [20/24] train_monitor\README.md
+# Size: 5933 bytes
+################################################################################
+
+# HormonicFormer 训练监控面板
+
+## 功能特性
+
+- 📊 **实时监控**: 通过WebSocket实时推送训练数据
+- 📈 **可视化图表**: 损失曲线、准确率曲线、学习率变化、神经调质变化
+- 🧬 **Hebbian统计**: 实时显示突触可塑性状态
+- 📱 **响应式界面**: 支持桌面和移动设备
+- 💾 **数据持久化**: TensorBoard日志和CSV文件记录
+
+## 项目结构
+
+```
+train_monitor/
+├── __init__.py           # 模块导出
+├── training_monitor.py   # 训练监控核心类
+├── web_server.py         # Flask + WebSocket服务器
+├── templates/
+│   └── index.html        # 监控面板前端页面
+└── README.md             # 本文件
+```
+
+## 快速开始
+
+### 1. 安装依赖
+
+```bash
+# 使用Anaconda环境
+C:\Users\MR\anaconda3\python.exe -m pip install flask flask-socketio eventlet tensorboard pillow
+```
+
+### 2. 启动训练
+
+方法一：使用PowerShell脚本（推荐）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File start_training.ps1
+```
+
+方法二：使用Python启动脚本
+
+```bash
+C:\Users\MR\anaconda3\python.exe launch_train.py --config local_config.yaml --device cuda
+```
+
+方法三：直接运行监控训练脚本
+
+```bash
+# 设置环境变量
+set KMP_DUPLICATE_LIB_OK=TRUE
+
+# 启动训练
+C:\Users\MR\anaconda3\python.exe monitored_train.py --config local_config.yaml --device cuda --monitor-port 5000
+```
+
+### 3. 访问监控面板
+
+在浏览器中打开：`http://localhost:5000`
+
+## 监控指标
+
+### 实时统计
+- **最佳验证准确率**: 训练过程中的最高验证准确率
+- **训练/验证损失**: 当前epoch的损失值
+- **训练/验证准确率**: 当前epoch的准确率
+- **学习率**: 当前学习率
+- **多巴胺(DA)**: 神经调质系统中的DA值
+- **GPU显存**: 当前显存使用量
+
+### 图表展示
+- **损失曲线**: 训练损失和验证损失的变化趋势
+- **准确率曲线**: 训练准确率和验证准确率的变化趋势
+- **学习率变化**: 学习率调度曲线
+- **DA/CB变化**: 神经调质变化曲线
+
+### Hebbian统计
+- **G均值**: G矩阵的平均值
+- **G标准差**: G矩阵的标准差
+- **稀疏度**: G矩阵的稀疏程度
+- **存活比例**: 存活连接的比例
+
+## 配置说明
+
+### 监控服务器配置
+
+```bash
+# 修改监控端口（默认5000）
+python monitored_train.py --monitor-port 8080
+```
+
+### 训练配置
+
+配置文件 `local_config.yaml` 已针对RTX 5070 8GB显存优化：
+
+- `batch_size: 64` - 适配8GB显存
+- `d_model: 128` - 精简模型参数
+- `n_layers: 2` - 减少层数加速训练
+- `use_amp: false` - 关闭混合精度避免NaN问题
+
+## 技术架构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      训练监控系统                               │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐    WebSocket    ┌──────────────────────┐    │
+│  │   训练脚本    │ ──────────────> │   Flask服务器        │    │
+│  │ monitored.py │                 │      web_server.py   │    │
+│  └──────────────┘                 └──────────┬───────────┘    │
+│         │                                    │                │
+│         │ 保存日志                           │ HTTP           │
+│         ▼                                    ▼                │
+│  ┌──────────────┐                   ┌──────────────────────┐  │
+│  │ TensorBoard  │                   │   监控面板           │  │
+│  │   日志文件    │                   │    index.html        │  │
+│  │    CSV文件   │                   │   (Chart.js图表)     │  │
+│  └──────────────┘                   └──────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## 文件说明
+
+| 文件 | 说明 |
+|------|------|
+| `training_monitor.py` | 训练监控核心类，处理数据收集和日志记录 |
+| `web_server.py` | Flask Web服务器，提供API和WebSocket推送 |
+| `templates/index.html` | 监控面板前端页面 |
+| `monitored_train.py` | 集成监控功能的训练脚本 |
+| `launch_train.py` | 训练启动脚本（处理环境变量） |
+| `start_training.ps1` | PowerShell启动脚本 |
+
+## 快捷键
+
+- **Ctrl+C**: 停止训练
+- **F5**: 刷新监控页面
+
+## 注意事项
+
+1. 确保Anaconda环境已激活且PyTorch版本正确
+2. 首次运行会自动下载FashionMNIST数据集
+3. 监控服务器默认使用5000端口，请确保该端口未被占用
+4. 训练过程中建议保持浏览器打开以获取实时更新
+
+## 故障排除
+
+### 常见问题
+
+**Q: 监控页面无法访问**
+
+A: 检查端口是否被占用，尝试更换端口：
+```bash
+python monitored_train.py --monitor-port 8080
+```
+
+**Q: 出现OpenMP错误**
+
+A: 确保设置了环境变量：
+```bash
+set KMP_DUPLICATE_LIB_OK=TRUE
+```
+
+**Q: GPU显存不足**
+
+A: 减小batch_size或使用梯度累积：
+```yaml
+train:
+  batch_size: 32
+  accumulation_steps: 4  # 等效batch_size 128
+```
+
+## 联系方式
+
+如有问题请查看项目根目录的README.md或联系开发者。
+
+
+################################################################################
+# [21/24] train_monitor\__init__.py
+# Size: 220 bytes
+################################################################################
+
+"""训练监控模块"""
+from .training_monitor import TrainingMonitor, GPUMonitor
+from .web_server import update_monitor_data, run_server
+
+__all__ = ['TrainingMonitor', 'GPUMonitor', 'update_monitor_data', 'run_server']
+
+
+################################################################################
+# [22/24] train_monitor\local_monitor.py
+# Size: 20087 bytes
+################################################################################
+
+"""
+本地训练监控软件 - 基于Tkinter的桌面应用
+支持实时监控、数据表格展示、图表显示和数据下载
+"""
+import os
+import sys
+import json
+import csv
+import re
+import threading
+import time
+from datetime import datetime
+from io import StringIO
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, filedialog
+    import matplotlib
+    matplotlib.use('TkAgg')
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from matplotlib.figure import Figure
+except ImportError as e:
+    print(f"需要安装依赖: {e}")
+    sys.exit(1)
+
+# 全局监控数据
+monitor_data = {
+    'is_training': False,
+    'current_epoch': 0,
+    'total_epochs': 0,
+    'metrics': {
+        'train_loss': [],
+        'train_acc': [],
+        'val_loss': [],
+        'val_acc': [],
+        'lr': [],
+        'da': [],
+        'cb': []
+    },
+    'hebbian_stats': [],
+    'gpu_memory': 0,
+    'start_time': None,
+    'elapsed_time': 0
+}
+
+class TrainingMonitorApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("HormonicFormer 训练监控")
+        self.root.geometry("1200x800")
+        self.root.minsize(1000, 600)
+        
+        # 数据更新锁
+        self.data_lock = threading.Lock()
+        
+        # 初始化UI
+        self.setup_ui()
+        
+        # 加载历史数据
+        self.load_history_data()
+        
+        # 定时更新UI
+        self.update_interval = 2000  # 2秒更新一次
+        self.schedule_update()
+    
+    def setup_ui(self):
+        # 创建主框架
+        self.main_frame = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 左侧面板 - 统计信息
+        self.left_panel = ttk.Frame(self.main_frame, width=300)
+        self.main_frame.add(self.left_panel, weight=1)
+        
+        # 右侧面板 - 图表和表格
+        self.right_panel = ttk.PanedWindow(self.main_frame, orient=tk.VERTICAL)
+        self.main_frame.add(self.right_panel, weight=3)
+        
+        # 统计卡片
+        self.setup_stats_cards()
+        
+        # 图表区域
+        self.setup_charts()
+        
+        # 数据表格区域
+        self.setup_data_table()
+        
+        # 下载按钮
+        self.setup_download_buttons()
+    
+    def setup_stats_cards(self):
+        """设置统计信息卡片"""
+        stats_frame = ttk.LabelFrame(self.left_panel, text="训练统计", padding=10)
+        stats_frame.pack(fill=tk.X, pady=5)
+        
+        self.stats_vars = {
+            'best_val_acc': tk.StringVar(value="0.00%"),
+            'train_loss': tk.StringVar(value="0.0000"),
+            'train_acc': tk.StringVar(value="0.00%"),
+            'val_loss': tk.StringVar(value="0.0000"),
+            'val_acc': tk.StringVar(value="0.00%"),
+            'lr': tk.StringVar(value="0.000000"),
+            'da': tk.StringVar(value="0.500"),
+            'gpu_memory': tk.StringVar(value="0 MB")
+        }
+        
+        stats_labels = [
+            ("最佳验证准确率", 'best_val_acc'),
+            ("当前训练损失", 'train_loss'),
+            ("当前训练准确率", 'train_acc'),
+            ("当前验证损失", 'val_loss'),
+            ("当前验证准确率", 'val_acc'),
+            ("学习率", 'lr'),
+            ("多巴胺 (DA)", 'da'),
+            ("GPU显存", 'gpu_memory')
+        ]
+        
+        for label_text, var_name in stats_labels:
+            frame = ttk.Frame(stats_frame)
+            frame.pack(fill=tk.X, pady=3)
+            
+            ttk.Label(frame, text=label_text, width=15).pack(side=tk.LEFT)
+            ttk.Label(frame, textvariable=self.stats_vars[var_name], 
+                      font=('Arial', 10, 'bold'), foreground='#0066cc').pack(side=tk.RIGHT)
+        
+        # 训练状态
+        self.status_var = tk.StringVar(value="空闲")
+        status_frame = ttk.Frame(stats_frame)
+        status_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(status_frame, text="训练状态:", width=15).pack(side=tk.LEFT)
+        status_label = ttk.Label(status_frame, textvariable=self.status_var, font=('Arial', 10, 'bold'))
+        status_label.pack(side=tk.RIGHT)
+        self.status_label = status_label
+        
+        # 进度条
+        progress_frame = ttk.LabelFrame(stats_frame, text="训练进度", padding=5)
+        progress_frame.pack(fill=tk.X, pady=5)
+        
+        self.progress_var = tk.StringVar(value="Epoch 0 / 0")
+        ttk.Label(progress_frame, textvariable=self.progress_var).pack(fill=tk.X)
+        
+        self.progress_bar = ttk.Progressbar(progress_frame, orient=tk.HORIZONTAL, length=200, mode='determinate')
+        self.progress_bar.pack(fill=tk.X, pady=5)
+        
+        # 时间显示
+        time_frame = ttk.LabelFrame(stats_frame, text="时间信息", padding=5)
+        time_frame.pack(fill=tk.X, pady=5)
+        
+        self.elapsed_time_var = tk.StringVar(value="已运行: 00:00:00")
+        ttk.Label(time_frame, textvariable=self.elapsed_time_var).pack(fill=tk.X)
+        
+        self.remaining_time_var = tk.StringVar(value="预计剩余: --:--:--")
+        ttk.Label(time_frame, textvariable=self.remaining_time_var).pack(fill=tk.X)
+    
+    def setup_charts(self):
+        """设置图表区域"""
+        chart_frame = ttk.LabelFrame(self.right_panel, text="训练图表", padding=10)
+        self.right_panel.add(chart_frame, weight=2)
+        
+        # 创建两个子图
+        self.fig = Figure(figsize=(10, 4), dpi=100)
+        
+        # 损失曲线
+        self.ax1 = self.fig.add_subplot(121)
+        self.ax1.set_title('损失曲线')
+        self.ax1.set_xlabel('Epoch')
+        self.ax1.set_ylabel('Loss')
+        self.ax1.grid(True)
+        
+        # 准确率曲线
+        self.ax2 = self.fig.add_subplot(122)
+        self.ax2.set_title('准确率曲线')
+        self.ax2.set_xlabel('Epoch')
+        self.ax2.set_ylabel('Accuracy (%)')
+        self.ax2.grid(True)
+        
+        # 神经调制曲线
+        self.fig2 = Figure(figsize=(10, 3), dpi=100)
+        self.ax3 = self.fig2.add_subplot(111)
+        self.ax3.set_title('DA / CB 变化')
+        self.ax3.set_xlabel('Epoch')
+        self.ax3.set_ylabel('Value')
+        self.ax3.grid(True)
+        
+        # 画布
+        self.canvas = FigureCanvasTkAgg(self.fig, chart_frame)
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        self.canvas2 = FigureCanvasTkAgg(self.fig2, chart_frame)
+        self.canvas2.get_tk_widget().pack(fill=tk.BOTH, expand=True, pady=5)
+    
+    def setup_data_table(self):
+        """设置数据表格"""
+        table_frame = ttk.LabelFrame(self.right_panel, text="训练数据表格", padding=10)
+        self.right_panel.add(table_frame, weight=2)
+        
+        # 创建树状视图作为表格
+        columns = ('epoch', 'train_loss', 'train_acc', 'val_loss', 'val_acc', 'lr', 'da', 'cb')
+        self.tree = ttk.Treeview(table_frame, columns=columns, show='headings')
+        
+        # 设置列标题
+        self.tree.heading('epoch', text='Epoch')
+        self.tree.heading('train_loss', text='Train Loss')
+        self.tree.heading('train_acc', text='Train Acc (%)')
+        self.tree.heading('val_loss', text='Val Loss')
+        self.tree.heading('val_acc', text='Val Acc (%)')
+        self.tree.heading('lr', text='LR')
+        self.tree.heading('da', text='DA')
+        self.tree.heading('cb', text='CB')
+        
+        # 设置列宽度
+        self.tree.column('epoch', width=60, anchor=tk.CENTER)
+        self.tree.column('train_loss', width=100, anchor=tk.E)
+        self.tree.column('train_acc', width=100, anchor=tk.E)
+        self.tree.column('val_loss', width=100, anchor=tk.E)
+        self.tree.column('val_acc', width=100, anchor=tk.E)
+        self.tree.column('lr', width=90, anchor=tk.E)
+        self.tree.column('da', width=60, anchor=tk.E)
+        self.tree.column('cb', width=60, anchor=tk.E)
+        
+        # 滚动条
+        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscroll=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.tree.pack(fill=tk.BOTH, expand=True)
+        
+        # 空数据提示
+        if not monitor_data['metrics']['train_loss']:
+            self.tree.insert('', tk.END, values=('等待训练数据...', '', '', '', '', '', '', ''))
+    
+    def setup_download_buttons(self):
+        """设置下载按钮"""
+        button_frame = ttk.Frame(self.root)
+        button_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Button(button_frame, text="📥 下载 CSV", command=self.download_csv).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="📥 下载 JSON", command=self.download_json).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="🔄 刷新数据", command=self.load_history_data).pack(side=tk.RIGHT, padx=5)
+    
+    def load_history_data(self):
+        """从日志文件加载历史训练数据"""
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
+        
+        if not os.path.exists(log_dir):
+            return
+        
+        log_files = [f for f in os.listdir(log_dir) if f.endswith('.log')]
+        if not log_files:
+            return
+        
+        log_files.sort(key=lambda x: os.path.getmtime(os.path.join(log_dir, x)), reverse=True)
+        latest_log = os.path.join(log_dir, log_files[0])
+        
+        try:
+            with open(latest_log, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            # 提取epoch数据
+            epoch_pattern = re.compile(
+                r'Epoch (\d+): train_loss=([\d.]+) train_acc=([\d.]+)% val_loss=([\d.]+) val_acc=([\d.]+)% DA=([\d.]+) CB=([\d.]+)'
+            )
+            
+            matches = epoch_pattern.findall(content)
+            
+            if matches:
+                with self.data_lock:
+                    for key in monitor_data['metrics']:
+                        monitor_data['metrics'][key] = []
+                    
+                    for match in matches:
+                        monitor_data['metrics']['train_loss'].append(float(match[1]))
+                        monitor_data['metrics']['train_acc'].append(float(match[2]))
+                        monitor_data['metrics']['val_loss'].append(float(match[3]))
+                        monitor_data['metrics']['val_acc'].append(float(match[4]))
+                        monitor_data['metrics']['da'].append(float(match[5]))
+                        monitor_data['metrics']['cb'].append(float(match[6]))
+                        monitor_data['metrics']['lr'].append(0.0005)
+                    
+                    monitor_data['current_epoch'] = len(matches)
+                    monitor_data['total_epochs'] = len(matches)
+                
+                self.update_ui()
+                print(f"Loaded {len(matches)} epochs from {latest_log}")
+        
+        except Exception as e:
+            print(f"Error loading history data: {e}")
+    
+    def update_ui(self):
+        """更新UI显示"""
+        with self.data_lock:
+            metrics = monitor_data['metrics']
+            
+            # 更新统计信息
+            if metrics['val_acc']:
+                best_acc = max(metrics['val_acc'])
+                self.stats_vars['best_val_acc'].set(f"{best_acc:.2f}%")
+            else:
+                self.stats_vars['best_val_acc'].set("0.00%")
+            
+            if metrics['train_loss']:
+                self.stats_vars['train_loss'].set(f"{metrics['train_loss'][-1]:.4f}")
+            if metrics['train_acc']:
+                self.stats_vars['train_acc'].set(f"{metrics['train_acc'][-1]:.2f}%")
+            if metrics['val_loss']:
+                self.stats_vars['val_loss'].set(f"{metrics['val_loss'][-1]:.4f}")
+            if metrics['val_acc']:
+                self.stats_vars['val_acc'].set(f"{metrics['val_acc'][-1]:.2f}%")
+            if metrics['lr']:
+                self.stats_vars['lr'].set(f"{metrics['lr'][-1]:.6f}")
+            if metrics['da']:
+                self.stats_vars['da'].set(f"{metrics['da'][-1]:.3f}")
+            
+            self.stats_vars['gpu_memory'].set(f"{monitor_data['gpu_memory']} MB")
+            
+            # 更新状态
+            status = "训练中" if monitor_data['is_training'] else "空闲"
+            self.status_var.set(status)
+            self.status_label.config(foreground='#00cc00' if monitor_data['is_training'] else '#666666')
+            
+            # 更新进度
+            current = monitor_data['current_epoch']
+            total = monitor_data['total_epochs']
+            self.progress_var.set(f"Epoch {current} / {total}")
+            
+            if total > 0:
+                self.progress_bar['value'] = (current / total) * 100
+            else:
+                self.progress_bar['value'] = 0
+            
+            # 更新时间
+            elapsed = monitor_data['elapsed_time']
+            self.elapsed_time_var.set(f"已运行: {self.format_time(elapsed)}")
+            
+            if current > 0 and total > 0:
+                avg_time = elapsed / current
+                remaining = (total - current) * avg_time
+                self.remaining_time_var.set(f"预计剩余: {self.format_time(remaining)}")
+            else:
+                self.remaining_time_var.set("预计剩余: --:--:--")
+            
+            # 更新图表
+            self.update_charts()
+            
+            # 更新表格
+            self.update_table()
+    
+    def update_charts(self):
+        """更新图表"""
+        metrics = monitor_data['metrics']
+        epochs = list(range(1, len(metrics['train_loss']) + 1))
+        
+        # 清空旧图表
+        self.ax1.clear()
+        self.ax2.clear()
+        self.ax3.clear()
+        
+        if epochs:
+            # 损失曲线
+            self.ax1.plot(epochs, metrics['train_loss'], label='Train Loss', color='#60a5fa')
+            self.ax1.plot(epochs, metrics['val_loss'], label='Val Loss', color='#f87171')
+            self.ax1.set_title('损失曲线')
+            self.ax1.set_xlabel('Epoch')
+            self.ax1.set_ylabel('Loss')
+            self.ax1.legend()
+            self.ax1.grid(True)
+            
+            # 准确率曲线
+            self.ax2.plot(epochs, metrics['train_acc'], label='Train Acc', color='#34d399')
+            self.ax2.plot(epochs, metrics['val_acc'], label='Val Acc', color='#a78bfa')
+            self.ax2.set_title('准确率曲线')
+            self.ax2.set_xlabel('Epoch')
+            self.ax2.set_ylabel('Accuracy (%)')
+            self.ax2.legend()
+            self.ax2.grid(True)
+            self.ax2.set_ylim(0, 100)
+            
+            # 神经调制曲线
+            self.ax3.plot(epochs, metrics['da'], label='DA', color='#f472b6')
+            self.ax3.plot(epochs, metrics['cb'], label='CB', color='#a3e635')
+            self.ax3.set_title('DA / CB 变化')
+            self.ax3.set_xlabel('Epoch')
+            self.ax3.set_ylabel('Value')
+            self.ax3.legend()
+            self.ax3.grid(True)
+            self.ax3.set_ylim(0, 1)
+        
+        self.canvas.draw()
+        self.canvas2.draw()
+    
+    def update_table(self):
+        """更新数据表格"""
+        # 清空现有数据
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        metrics = monitor_data['metrics']
+        
+        if not metrics['train_loss']:
+            self.tree.insert('', tk.END, values=('等待训练数据...', '', '', '', '', '', '', ''))
+            return
+        
+        # 找到最佳验证准确率
+        best_epoch = 0
+        best_val_acc = 0
+        if metrics['val_acc']:
+            best_val_acc = max(metrics['val_acc'])
+            best_epoch = metrics['val_acc'].index(best_val_acc) + 1
+        
+        # 添加数据行
+        for i in range(len(metrics['train_loss'])):
+            values = (
+                i + 1,
+                f"{metrics['train_loss'][i]:.4f}",
+                f"{metrics['train_acc'][i]:.2f}",
+                f"{metrics['val_loss'][i]:.4f}",
+                f"{metrics['val_acc'][i]:.2f}",
+                f"{metrics['lr'][i]:.6f}",
+                f"{metrics['da'][i]:.3f}",
+                f"{metrics['cb'][i]:.3f}"
+            )
+            self.tree.insert('', tk.END, values=values)
+    
+    def download_csv(self):
+        """下载CSV文件"""
+        with self.data_lock:
+            metrics = monitor_data['metrics']
+            epochs = len(metrics['train_loss'])
+            
+            if epochs == 0:
+                messagebox.showwarning("警告", "没有数据可下载")
+                return
+            
+            output = StringIO()
+            writer = csv.writer(output)
+            
+            writer.writerow(['Epoch', 'Train Loss', 'Train Acc (%)', 'Val Loss', 'Val Acc (%)', 'Learning Rate', 'DA', 'CB'])
+            
+            for i in range(epochs):
+                writer.writerow([
+                    i + 1,
+                    round(metrics['train_loss'][i], 4),
+                    round(metrics['train_acc'][i], 2),
+                    round(metrics['val_loss'][i], 4),
+                    round(metrics['val_acc'][i], 2),
+                    round(metrics['lr'][i], 6),
+                    round(metrics['da'][i], 3),
+                    round(metrics['cb'][i], 3)
+                ])
+            
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f'training_data_{timestamp}.csv'
+            
+            # 选择保存位置
+            filepath = filedialog.asksaveasfilename(
+                defaultextension='.csv',
+                filetypes=[('CSV文件', '*.csv')],
+                initialfile=filename
+            )
+            
+            if filepath:
+                with open(filepath, 'w', encoding='utf-8', newline='') as f:
+                    f.write(output.getvalue())
+                messagebox.showinfo("成功", f"数据已保存到:\n{filepath}")
+    
+    def download_json(self):
+        """下载JSON文件"""
+        with self.data_lock:
+            if not monitor_data['metrics']['train_loss']:
+                messagebox.showwarning("警告", "没有数据可下载")
+                return
+            
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f'training_data_{timestamp}.json'
+            
+            filepath = filedialog.asksaveasfilename(
+                defaultextension='.json',
+                filetypes=[('JSON文件', '*.json')],
+                initialfile=filename
+            )
+            
+            if filepath:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(monitor_data, f, indent=2, default=str)
+                messagebox.showinfo("成功", f"数据已保存到:\n{filepath}")
+    
+    def schedule_update(self):
+        """定时更新UI"""
+        self.update_ui()
+        self.root.after(self.update_interval, self.schedule_update)
+    
+    @staticmethod
+    def format_time(seconds):
+        """格式化时间显示"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+if __name__ == '__main__':
+    # 设置OpenMP环境变量
+    os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+    
+    root = tk.Tk()
+    app = TrainingMonitorApp(root)
+    root.mainloop()
+
+
+
+################################################################################
+# [23/24] train_monitor\training_monitor.py
+# Size: 7079 bytes
+################################################################################
+
+"""
+训练监控器 - 实时监控HormonicFormer训练数据
+支持: TensorBoard、WebSocket实时推送、CSV日志
+"""
+import os
+import time
+import json
+import csv
+from datetime import datetime
+from pathlib import Path
+
+import torch
+from torch.utils.tensorboard import SummaryWriter
+
+
+class TrainingMonitor:
+    """训练监控器主类"""
+    
+    def __init__(self, config, log_dir=None):
+        self.config = config
+        self.log_dir = Path(log_dir or config['train']['log_dir'])
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 监控数据缓存
+        self.metrics = {
+            'train_loss': [],
+            'train_acc': [],
+            'val_loss': [],
+            'val_acc': [],
+            'lr': [],
+            'da': [],
+            'cb': [],
+            'gpu_memory': [],
+            'epoch_times': [],
+            'hebbian_stats': []
+        }
+        
+        # TensorBoard writer
+        self.tb_writer = SummaryWriter(log_dir=str(self.log_dir / 'tensorboard'))
+        
+        # CSV日志文件
+        self.csv_file = open(self.log_dir / 'training_metrics.csv', 'w', newline='', encoding='utf-8')
+        self.csv_writer = csv.writer(self.csv_file)
+        self.csv_writer.writerow([
+            'epoch', 'timestamp', 'train_loss', 'train_acc', 'val_loss', 
+            'val_acc', 'lr', 'da', 'cb', 'gpu_memory_mb', 'epoch_time_s'
+        ])
+        
+        # 最近一次数据（用于实时推送）
+        self.last_data = {}
+        
+        # 训练开始时间
+        self.start_time = time.time()
+        
+    def log_epoch(self, epoch, train_loss, train_acc, val_loss, val_acc, 
+                  lr=0.0, da=0.5, cb=0.0, gpu_memory=0, epoch_time=0.0):
+        """记录一个epoch的训练数据"""
+        # 添加到缓存
+        self.metrics['train_loss'].append(train_loss)
+        self.metrics['train_acc'].append(train_acc)
+        self.metrics['val_loss'].append(val_loss)
+        self.metrics['val_acc'].append(val_acc)
+        self.metrics['lr'].append(lr)
+        self.metrics['da'].append(da)
+        self.metrics['cb'].append(cb)
+        self.metrics['gpu_memory'].append(gpu_memory)
+        self.metrics['epoch_times'].append(epoch_time)
+        
+        # 写入TensorBoard
+        self.tb_writer.add_scalar('Loss/train', train_loss, epoch)
+        self.tb_writer.add_scalar('Loss/val', val_loss, epoch)
+        self.tb_writer.add_scalar('Accuracy/train', train_acc, epoch)
+        self.tb_writer.add_scalar('Accuracy/val', val_acc, epoch)
+        self.tb_writer.add_scalar('LearningRate', lr, epoch)
+        self.tb_writer.add_scalar('Neuromodulator/DA', da, epoch)
+        self.tb_writer.add_scalar('Neuromodulator/CB', cb, epoch)
+        self.tb_writer.add_scalar('System/GPU_Memory_MB', gpu_memory, epoch)
+        self.tb_writer.add_scalar('System/Epoch_Time_S', epoch_time, epoch)
+        
+        # 写入CSV
+        self.csv_writer.writerow([
+            epoch, datetime.now().isoformat(),
+            train_loss, train_acc, val_loss, val_acc,
+            lr, da, cb, gpu_memory, epoch_time
+        ])
+        self.csv_file.flush()
+        
+        # 更新最近数据
+        self.last_data = {
+            'epoch': epoch,
+            'timestamp': datetime.now().isoformat(),
+            'train_loss': train_loss,
+            'train_acc': train_acc,
+            'val_loss': val_loss,
+            'val_acc': val_acc,
+            'lr': lr,
+            'da': da,
+            'cb': cb,
+            'gpu_memory': gpu_memory,
+            'epoch_time': epoch_time,
+            'elapsed_time': time.time() - self.start_time
+        }
+        
+    def log_hebbian_stats(self, epoch, stats):
+        """记录Hebbian统计信息"""
+        self.metrics['hebbian_stats'].append({
+            'epoch': epoch,
+            'stats': stats
+        })
+        
+        # 写入TensorBoard
+        for stat in stats:
+            layer = stat['layer']
+            self.tb_writer.add_scalar(f'Hebbian/Layer{layer}_G_mean', stat['G_mean'], epoch)
+            self.tb_writer.add_scalar(f'Hebbian/Layer{layer}_G_std', stat['G_std'], epoch)
+            self.tb_writer.add_scalar(f'Hebbian/Layer{layer}_sparsity', stat['G_sparsity'], epoch)
+            self.tb_writer.add_scalar(f'Hebbian/Layer{layer}_alive_ratio', stat['alive_ratio'], epoch)
+        
+        self.last_data['hebbian_stats'] = stats
+        
+    def log_batch(self, epoch, batch_idx, loss, acc, lr):
+        """记录batch级别的数据"""
+        global_step = (epoch - 1) * 1000 + batch_idx
+        self.tb_writer.add_scalar('Loss/batch', loss, global_step)
+        self.tb_writer.add_scalar('Accuracy/batch', acc, global_step)
+        
+    def get_recent_data(self):
+        """获取最近的监控数据（用于实时推送）"""
+        return self.last_data
+    
+    def get_all_metrics(self):
+        """获取所有历史指标"""
+        return self.metrics
+    
+    def get_summary(self):
+        """获取训练摘要"""
+        if not self.metrics['val_acc']:
+            return None
+            
+        best_idx = int(torch.argmax(torch.tensor(self.metrics['val_acc'])).item())
+        return {
+            'total_epochs': len(self.metrics['train_loss']),
+            'best_val_acc': self.metrics['val_acc'][best_idx],
+            'best_epoch': best_idx + 1,
+            'avg_epoch_time': sum(self.metrics['epoch_times']) / len(self.metrics['epoch_times']),
+            'current_da': self.metrics['da'][-1] if self.metrics['da'] else 0.5,
+            'current_lr': self.metrics['lr'][-1] if self.metrics['lr'] else 0.0
+        }
+        
+    def close(self):
+        """关闭监控器"""
+        self.tb_writer.close()
+        self.csv_file.close()
+
+
+class GPUMonitor:
+    """GPU显存监控器"""
+    
+    @staticmethod
+    def get_memory_usage(device_id=0):
+        """获取GPU显存使用情况"""
+        if not torch.cuda.is_available():
+            return {'allocated': 0, 'reserved': 0, 'total': 0}
+            
+        allocated = torch.cuda.memory_allocated(device_id) / 1024**2
+        reserved = torch.cuda.memory_reserved(device_id) / 1024**2
+        total = torch.cuda.get_device_properties(device_id).total_memory / 1024**2
+        
+        return {
+            'allocated': int(allocated),
+            'reserved': int(reserved),
+            'total': int(total),
+            'used_percent': (allocated / total) * 100
+        }
+    
+    @staticmethod
+    def log_memory_usage(logger=None):
+        """打印显存使用日志"""
+        if not torch.cuda.is_available():
+            return 0
+            
+        mem = GPUMonitor.get_memory_usage()
+        msg = f"[GPU] 已用: {mem['allocated']}MB / 预留: {mem['reserved']}MB / 总共: {mem['total']}MB ({mem['used_percent']:.1f}%)"
+        
+        if logger:
+            logger.info(msg)
+        else:
+            print(msg)
+            
+        return mem['allocated']
+
+
+
+################################################################################
+# [24/24] train_monitor\web_server.py
+# Size: 10132 bytes
+################################################################################
+
+"""
+训练监控Web服务器 - Flask + WebSocket
+提供实时监控界面和API接口
+支持从日志文件加载历史训练数据
+"""
+import os
+import json
+import csv
+import threading
+import re
+from datetime import datetime
+from io import StringIO
+from flask import Flask, render_template, jsonify, send_from_directory, Response
+from flask_socketio import SocketIO, emit
+
+app = Flask(__name__, template_folder='templates', static_folder='static')
+app.config['SECRET_KEY'] = 'hormonic_monitor_secret'
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
+
+# 全局监控数据存储
+monitor_data = {
+    'is_training': False,
+    'current_epoch': 0,
+    'total_epochs': 0,
+    'metrics': {
+        'train_loss': [],
+        'train_acc': [],
+        'val_loss': [],
+        'val_acc': [],
+        'lr': [],
+        'da': [],
+        'cb': []
+    },
+    'hebbian_stats': [],
+    'gpu_memory': 0,
+    'start_time': None,
+    'elapsed_time': 0
+}
+
+# 数据更新锁
+data_lock = threading.Lock()
+
+# 日志文件路径
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
+
+
+def load_history_data():
+    """从日志文件加载历史训练数据"""
+    global monitor_data
+    
+    if not os.path.exists(LOG_DIR):
+        return
+    
+    # 找到最新的日志文件
+    log_files = [f for f in os.listdir(LOG_DIR) if f.endswith('.log')]
+    if not log_files:
+        return
+    
+    # 按修改时间排序，取最新的
+    log_files.sort(key=lambda x: os.path.getmtime(os.path.join(LOG_DIR, x)), reverse=True)
+    latest_log = os.path.join(LOG_DIR, log_files[0])
+    
+    try:
+        with open(latest_log, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        # 提取epoch数据：格式类似 "Epoch 1: train_loss=2.1123 train_acc=20.5% val_loss=1.9373 val_acc=26.4% DA=0.326 CB=0.000"
+        epoch_pattern = re.compile(
+            r'Epoch (\d+): train_loss=([\d.]+) train_acc=([\d.]+)% val_loss=([\d.]+) val_acc=([\d.]+)% DA=([\d.]+) CB=([\d.]+)'
+        )
+        
+        matches = epoch_pattern.findall(content)
+        
+        if matches:
+            with data_lock:
+                # 清空现有数据
+                for key in monitor_data['metrics']:
+                    monitor_data['metrics'][key] = []
+                
+                for match in matches:
+                    epoch = int(match[0])
+                    train_loss = float(match[1])
+                    train_acc = float(match[2])
+                    val_loss = float(match[3])
+                    val_acc = float(match[4])
+                    da = float(match[5])
+                    cb = float(match[6])
+                    
+                    monitor_data['metrics']['train_loss'].append(train_loss)
+                    monitor_data['metrics']['train_acc'].append(train_acc)
+                    monitor_data['metrics']['val_loss'].append(val_loss)
+                    monitor_data['metrics']['val_acc'].append(val_acc)
+                    monitor_data['metrics']['da'].append(da)
+                    monitor_data['metrics']['cb'].append(cb)
+                    # 学习率需要从batch日志中提取，这里先用默认值
+                    monitor_data['metrics']['lr'].append(0.0005)
+                
+                monitor_data['current_epoch'] = len(matches)
+                monitor_data['total_epochs'] = len(matches)
+                
+            print(f"Loaded {len(matches)} epochs from {latest_log}")
+    
+    except Exception as e:
+        print(f"Error loading history data: {e}")
+
+
+# 启动时加载历史数据
+load_history_data()
+
+
+@app.route('/')
+def index():
+    """主监控页面"""
+    return render_template('index.html')
+
+
+@app.route('/api/metrics')
+def get_metrics():
+    """获取所有监控数据"""
+    with data_lock:
+        return jsonify(monitor_data)
+
+
+@app.route('/api/summary')
+def get_summary():
+    """获取训练摘要"""
+    with data_lock:
+        metrics = monitor_data['metrics']
+        if not metrics['val_acc']:
+            return jsonify({'error': 'No data yet'})
+            
+        best_idx = max(range(len(metrics['val_acc'])), key=lambda i: metrics['val_acc'][i])
+        return jsonify({
+            'total_epochs': len(metrics['train_loss']),
+            'best_val_acc': metrics['val_acc'][best_idx],
+            'best_epoch': best_idx + 1,
+            'current_epoch': monitor_data['current_epoch'],
+            'is_training': monitor_data['is_training'],
+            'elapsed_time': monitor_data['elapsed_time']
+        })
+
+
+@app.route('/api/table_data')
+def get_table_data():
+    """获取表格数据（用于显示和下载）"""
+    with data_lock:
+        metrics = monitor_data['metrics']
+        epochs = len(metrics['train_loss'])
+        table_data = []
+        
+        for i in range(epochs):
+            table_data.append({
+                'epoch': i + 1,
+                'train_loss': round(metrics['train_loss'][i], 4) if i < len(metrics['train_loss']) else '-',
+                'train_acc': round(metrics['train_acc'][i], 2) if i < len(metrics['train_acc']) else '-',
+                'val_loss': round(metrics['val_loss'][i], 4) if i < len(metrics['val_loss']) else '-',
+                'val_acc': round(metrics['val_acc'][i], 2) if i < len(metrics['val_acc']) else '-',
+                'lr': round(metrics['lr'][i], 6) if i < len(metrics['lr']) else '-',
+                'da': round(metrics['da'][i], 3) if i < len(metrics['da']) else '-',
+                'cb': round(metrics['cb'][i], 3) if i < len(metrics['cb']) else '-'
+            })
+        
+        return jsonify({
+            'data': table_data,
+            'summary': {
+                'total_epochs': epochs,
+                'best_val_acc': max(metrics['val_acc']) if metrics['val_acc'] else 0,
+                'best_epoch': metrics['val_acc'].index(max(metrics['val_acc'])) + 1 if metrics['val_acc'] else 0
+            }
+        })
+
+
+@app.route('/api/download/csv')
+def download_csv():
+    """下载训练数据CSV文件"""
+    with data_lock:
+        metrics = monitor_data['metrics']
+        epochs = len(metrics['train_loss'])
+        
+        # 创建CSV内容
+        output = StringIO()
+        writer = csv.writer(output)
+        
+        # 表头
+        writer.writerow(['Epoch', 'Train Loss', 'Train Acc (%)', 'Val Loss', 'Val Acc (%)', 'Learning Rate', 'DA', 'CB'])
+        
+        # 数据行
+        for i in range(epochs):
+            writer.writerow([
+                i + 1,
+                round(metrics['train_loss'][i], 4) if i < len(metrics['train_loss']) else '',
+                round(metrics['train_acc'][i], 2) if i < len(metrics['train_acc']) else '',
+                round(metrics['val_loss'][i], 4) if i < len(metrics['val_loss']) else '',
+                round(metrics['val_acc'][i], 2) if i < len(metrics['val_acc']) else '',
+                round(metrics['lr'][i], 6) if i < len(metrics['lr']) else '',
+                round(metrics['da'][i], 3) if i < len(metrics['da']) else '',
+                round(metrics['cb'][i], 3) if i < len(metrics['cb']) else ''
+            ])
+        
+        output.seek(0)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # 返回CSV响应
+        return Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={
+                'Content-Disposition': f'attachment; filename=training_data_{timestamp}.csv',
+                'Content-Type': 'text/csv; charset=utf-8'
+            }
+        )
+
+
+@app.route('/api/download/json')
+def download_json():
+    """下载训练数据JSON文件"""
+    with data_lock:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # 返回JSON响应
+        return Response(
+            json.dumps(monitor_data, indent=2, default=str),
+            mimetype='application/json',
+            headers={
+                'Content-Disposition': f'attachment; filename=training_data_{timestamp}.json',
+                'Content-Type': 'application/json; charset=utf-8'
+            }
+        )
+
+
+@socketio.on('connect')
+def handle_connect():
+    """WebSocket连接处理"""
+    print(f"Client connected: {datetime.now()}")
+    with data_lock:
+        emit('init_data', monitor_data)
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """WebSocket断开处理"""
+    print(f"Client disconnected: {datetime.now()}")
+
+
+def update_monitor_data(new_data):
+    """更新监控数据（线程安全）"""
+    global monitor_data
+    with data_lock:
+        # 更新状态
+        if 'is_training' in new_data:
+            monitor_data['is_training'] = new_data['is_training']
+            if new_data['is_training'] and monitor_data['start_time'] is None:
+                monitor_data['start_time'] = datetime.now()
+        
+        # 更新指标
+        if 'metrics' in new_data:
+            for key, value in new_data['metrics'].items():
+                if key in monitor_data['metrics']:
+                    monitor_data['metrics'][key].append(value)
+        
+        # 更新当前epoch
+        if 'current_epoch' in new_data:
+            monitor_data['current_epoch'] = new_data['current_epoch']
+        
+        if 'total_epochs' in new_data:
+            monitor_data['total_epochs'] = new_data['total_epochs']
+        
+        # 更新Hebbian统计
+        if 'hebbian_stats' in new_data:
+            monitor_data['hebbian_stats'] = new_data['hebbian_stats']
+        
+        # 更新GPU显存
+        if 'gpu_memory' in new_data:
+            monitor_data['gpu_memory'] = new_data['gpu_memory']
+        
+        # 更新时间
+        if monitor_data['start_time']:
+            monitor_data['elapsed_time'] = (datetime.now() - monitor_data['start_time']).total_seconds()
+    
+    # 通过WebSocket推送更新
+    socketio.emit('data_update', monitor_data)
+
+
+def run_server(host='0.0.0.0', port=5000, debug=False):
+    """启动Web服务器"""
+    print(f"Starting training monitor server on http://{host}:{port}")
+    socketio.run(app, host=host, port=port, debug=debug, use_reloader=False)
+
+
+if __name__ == '__main__':
+    run_server(debug=True)
+

@@ -1,0 +1,740 @@
+================================================================================
+HormonicFormer v7r3 — 通用序列架构（修复视觉偏向）
+================================================================================
+版本: v7r3-20260601
+核心变更:
+  1. 移除视觉导向的patchify/分类头，恢复通用序列输入
+  2. 应用审查补丁: STP维度修复 + G-coupling推理生效 + Laplacian多维
+  3. 架构: Token Embedding → CGL场演化 → 通用输出头（LM/分类/回归）
+  4. 所有6条闭环回路保持闭合
+
+================================================================================
+目录
+================================================================================
+1. Laplacian（多维输入支持 + IDFT符号注释修正）
+2. ExponentialSTP（batch平均 + register_buffer规范化）
+3. Divisive E/I, CGL, PAC, Hebbian, PC（不变）
+4. 神经调质系统（reset_state接口）
+5. HormonicBlockV7r3（STP广播 + G-coupling始终生效）
+6. HormonicFormerV7r3（通用序列，无视觉硬编码）
+7. 验证测试
+
+================================================================================
+1. DFTLaplacian — 通用多维输入支持（审查补丁修复4）
+================================================================================
+
+class DFTLaplacian(nn.Module):
+    """
+    DFT矩阵实现的Laplacian算子 — 通用多维支持
+    
+    支持输入形状:
+      - [..., seq_len]: 简单情况
+      - [..., seq_len, features]: 复数场的 [B, S, D] 或 [B, S, D, 2]
+      - [B, C, S, D]: 任意 leading 维度
+    
+    IDFT符号说明:
+      theta = -2*pi*k*n/N
+      W_inv_real = cos(theta).T/N  =  cos(2*pi*k*n/N)/N
+      W_inv_imag = sin(theta).T/N  = -sin(2*pi*k*n/N)/N  (内置负号!)
+      
+      所以 matmul(X_imag, W_inv_imag.T) 
+        = sum_k X_imag[k] * (-sin(2*pi*k*n/N)/N)
+        = - sum_k X_imag[k] * sin(2*pi*k*n/N) / N
+        
+      这正是 IDFT 实部公式中的 -X_imag*sin 项。
+      因此代码用 + 号连接，但数学上等价于 -X_imag*sin。
+    """
+    def __init__(self, seq_len: int):
+        super().__init__()
+        self.seq_len = seq_len
+        self._init_dft_matrix()
+
+    def _init_dft_matrix(self):
+        N = self.seq_len
+        n = torch.arange(N, dtype=torch.float64)
+        k = torch.arange(N, dtype=torch.float64).view(-1, 1)
+        theta = -2 * np.pi * k * n / N
+        self.register_buffer('W_real', torch.cos(theta).float())
+        self.register_buffer('W_imag', torch.sin(theta).float())
+        self.register_buffer('W_inv_real', torch.cos(theta).T.float() / N)
+        self.register_buffer('W_inv_imag', torch.sin(theta).T.float() / N)
+        k_freq = torch.arange(N, dtype=torch.float64)
+        k_freq = torch.minimum(k_freq, N - k_freq)
+        scale = (2.0 * np.pi / N) ** 2
+        self.register_buffer('lap_kernel', (-scale * (k_freq ** 2)).float())
+        self.max_eigenval = (scale * ((N // 2) ** 2)).item()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.shape[-1] == self.seq_len:
+            return self._apply_laplacian(x)
+        elif x.shape[-2] == self.seq_len:
+            *leading, S, D = x.shape
+            x_flat = x.reshape(-1, S, D)
+            x_flat = x_flat.permute(0, 2, 1).reshape(-1, S)
+            lap_flat = self._apply_laplacian(x_flat)
+            lap_flat = lap_flat.reshape(-1, D, S).permute(0, 2, 1)
+            return lap_flat.reshape(*leading, S, D)
+        else:
+            raise ValueError(f"Last two dims must contain seq_len={self.seq_len}, got {x.shape}")
+
+    def _apply_laplacian(self, x):
+        X_real = torch.matmul(x, self.W_real.T)
+        X_imag = torch.matmul(x, self.W_imag.T)
+        X_real_lap = X_real * self.lap_kernel
+        X_imag_lap = X_imag * self.lap_kernel
+        # +号正确: W_inv_imag内置负号，等价于 -X_imag*sin/N
+        return torch.matmul(X_real_lap, self.W_inv_real.T) + torch.matmul(X_imag_lap, self.W_inv_imag.T)
+
+
+================================================================================
+2. ExponentialSTP — batch平均 + register_buffer（审查补丁修复3）
+================================================================================
+
+class ExponentialSTP(nn.Module):
+    """
+    短时突触可塑性 — v7r3修正版
+    修正: spike_intensity对batch取平均，避免维度不匹配
+          register_buffer规范化（非参数状态）
+    """
+    def __init__(self, n_heads: int, d_model: int, config: dict):
+        super().__init__()
+        stp_cfg = config.get('stp', {})
+        self.U = stp_cfg.get('U', 0.2)
+        self.tau_f = stp_cfg.get('tau_f', 1.0)
+        self.tau_d = stp_cfg.get('tau_d', 3.0)
+        self.dt = stp_cfg.get('dt', 0.05)
+        n_groups = max(1, d_model // n_heads)
+        # register_buffer: 这些是运行状态，不是可学习参数
+        self.register_buffer('u', torch.ones(1, n_groups) * self.U)
+        self.register_buffer('r', torch.ones(1, n_groups))
+        self.register_buffer('exp_f', torch.tensor(math.exp(-self.dt / self.tau_f)))
+        self.register_buffer('exp_d', torch.tensor(math.exp(-self.dt / self.tau_d)))
+
+    def step(self, spike_intensity: torch.Tensor):
+        """
+        spike_intensity: [B, G] 或标量
+        对batch取平均后更新全局状态 [1, G]
+        """
+        if not isinstance(spike_intensity, torch.Tensor):
+            spike_intensity = torch.tensor([[float(spike_intensity)]], device=self.u.device)
+        if spike_intensity.dim() == 0:
+            spike_intensity = spike_intensity.view(1, 1)
+        if spike_intensity.dim() == 1:
+            spike_intensity = spike_intensity.unsqueeze(0)
+        # 聚合batch，保持 [1, G] 状态
+        spike_avg = spike_intensity.mean(dim=0, keepdim=True)  # [1, G]
+        assert spike_avg.shape[1] == self.u.shape[1], f"STP group mismatch: {spike_avg.shape} vs {self.u.shape}"
+        u_relax = self.U + (self.u - self.U) * self.exp_f
+        r_relax = 1.0 + (self.r - 1.0) * self.exp_d
+        u_new = u_relax + self.U * (1.0 - u_relax) * spike_avg
+        r_new = r_relax - u_relax * r_relax * spike_avg
+        self.u.copy_(torch.clamp(u_new, 0.01, 1.0))
+        self.r.copy_(torch.clamp(r_new, 0.01, 1.0))
+
+    def get_efficacy(self):
+        return self.u * self.r  # [1, G]
+
+    def get_modulation_factor(self):
+        """返回 [1, G] 调制因子，用于后续广播到 [B, S, D, 2]"""
+        eff = self.get_efficacy()
+        return 0.5 + eff  # [1, G], 范围 [0.51, 1.5]
+
+    def reset(self):
+        self.u.fill_(self.U)
+        self.r.fill_(1.0)
+
+
+================================================================================
+3. 不变模块（Divisive E/I, CGL, PAC, Hebbian, PC）
+================================================================================
+
+class DivisiveEIBalance(nn.Module):
+    """不变 — frozen by design"""
+    def __init__(self, seq_len, d_model, gamma_e=1.0, gamma_i=0.8, kappa=0.3, inh_radius=3):
+        super().__init__()
+        self.gamma_e = gamma_e; self.gamma_i = gamma_i; self.kappa = kappa
+        positions = torch.arange(seq_len).float().unsqueeze(0)
+        distances = torch.abs(positions - positions.T)
+        distances = torch.minimum(distances, seq_len - distances)
+        inh_weights = torch.exp(-(distances**2)/(2*inh_radius**2))
+        inh_weights.fill_diagonal_(0)
+        inh_weights = inh_weights / (inh_weights.sum(dim=1, keepdim=True) + 1e-8)
+        self.register_buffer('inh_weights', inh_weights)
+
+    def forward(self, psi_amp):
+        excitation = self.gamma_e * F.relu(psi_amp)
+        amp_sq = psi_amp ** 2
+        self_inh = self.gamma_i * amp_sq
+        inh_w = self.inh_weights.unsqueeze(0).unsqueeze(-1)
+        amp_sq_exp = amp_sq.unsqueeze(1)
+        neighbor = (inh_w * amp_sq_exp).sum(dim=2)
+        lateral = self.kappa * neighbor
+        return excitation / (1.0 + self_inh + lateral)
+
+
+class CGLFieldEvolution(nn.Module):
+    """标准CGL — v7r1不变"""
+    def __init__(self, d_model, seq_len, n_steps=10, D0_amp=0.002, D0_phase=0.002,
+                 dt=0.02, noise_scale=0.001):
+        super().__init__()
+        self.d_model = d_model; self.seq_len = seq_len; self.n_steps = n_steps
+        self.D0_amp = D0_amp; self.D0_phase = D0_phase; self.dt = dt
+        self.noise_scale = noise_scale
+        self.laplacian = DFTLaplacian(seq_len)
+        self.alpha_raw = nn.Parameter(torch.tensor(1.0))  # 通过softplus保证正性
+        self.beta = nn.Parameter(torch.tensor(0.5))
+
+    @property
+    def alpha(self):
+        """保证α>0，极限环半径=√α有意义"""
+        return F.softplus(self.alpha_raw)
+        self.ei_balance = DivisiveEIBalance(seq_len, d_model)
+
+    def _cgl_nonlinear(self, re, im, alpha, beta):
+        amp_sq = re**2 + im**2
+        coeff = alpha - amp_sq
+        return coeff*re - beta*im, coeff*im + beta*re
+
+    def _diffusion_step(self, re, im, D_amp, D_phase, dt):
+        B, S, D = re.shape
+        re_r = re.permute(0,2,1).reshape(B*D, S)
+        im_r = im.permute(0,2,1).reshape(B*D, S)
+        lr = self.laplacian(re_r).reshape(B,D,S).permute(0,2,1)
+        li = self.laplacian(im_r).reshape(B,D,S).permute(0,2,1)
+        return re + dt*D_amp*lr, im + dt*D_phase*li
+
+    def _heun_halfstep(self, re, im, alpha, beta, dt_half):
+        k1r, k1i = self._cgl_nonlinear(re, im, alpha, beta)
+        rp, ip = re + dt_half*k1r, im + dt_half*k1i
+        k2r, k2i = self._cgl_nonlinear(rp, ip, alpha, beta)
+        return re + dt_half*0.5*(k1r+k2r), im + dt_half*0.5*(k1i+k2i)
+
+    def forward(self, psi_in, alpha_eff=None, beta_eff=None,
+                D_amp_override=None, D_phase_override=None):
+        B, S, D, _ = psi_in.shape
+        re, im = psi_in[...,0], psi_in[...,1]
+        if alpha_eff is None: alpha_eff = self.alpha
+        if beta_eff is None: beta_eff = self.beta
+        Da = D_amp_override if D_amp_override is not None else self.D0_amp
+        Dp = D_phase_override if D_phase_override is not None else self.D0_phase
+        with torch.no_grad():
+            mod = self.ei_balance(torch.sqrt(re**2 + im**2 + 1e-8))
+        re, im = re*mod, im*mod
+        h = 0.5 * self.dt
+        for _ in range(self.n_steps):
+            rh, ih = self._heun_halfstep(re, im, alpha_eff, beta_eff, h)
+            rf, if_ = self._diffusion_step(rh, ih, Da, Dp, self.dt)
+            re, im = self._heun_halfstep(rf, if_, alpha_eff, beta_eff, h)
+            if self.noise_scale > 0:
+                re += self.noise_scale * torch.randn_like(re) * math.sqrt(self.dt)
+                im += self.noise_scale * torch.randn_like(im) * math.sqrt(self.dt)
+        return torch.stack([re, im], dim=-1)
+
+
+class PhaseAmplitudeCoupling(nn.Module):
+    """不变"""
+    def __init__(self, n_layers, alpha_pac=0.15):
+        super().__init__()
+        self.alpha_pac = alpha_pac
+        self.freq_ratios = nn.Parameter(torch.linspace(2.0, 8.0, max(1, n_layers-1)))
+
+    def forward(self, psi_low, amp_high, layer_idx):
+        theta_low = torch.atan2(psi_low[...,1], psi_low[...,0] + 1e-8)
+        fr = torch.clamp(self.freq_ratios[layer_idx-1], 1.0, 12.0) if (layer_idx > 0 and layer_idx <= len(self.freq_ratios)) else torch.tensor(4.0, device=psi_low.device)
+        return amp_high * (1.0 + self.alpha_pac * torch.cos(fr * theta_low))
+
+
+class MetaplasticHebbian(nn.Module):
+    """不变 — 含surprise_score接口"""
+    def __init__(self, seq_len, config):
+        super().__init__()
+        hc = config.get('hebbian', {})
+        self.eta_pot = hc.get('eta_potentiate', 0.001)
+        self.eta_dep = hc.get('eta_depress', 0.0005)
+        self.thresh = hc.get('sync_threshold', 0.3)
+        self.decay = hc.get('decay', 0.999)
+        self.G = nn.Parameter(torch.randn(seq_len, seq_len) * 0.01)
+        self.register_buffer('alive_mask', torch.ones(seq_len, seq_len))
+
+    def compute_sync(self, phase):
+        theta = phase.mean(dim=-1)  # [B,S]
+        pd = theta.unsqueeze(2) - theta.unsqueeze(1)  # [B,S,S]
+        sync = torch.cos(pd).mean(dim=0)  # [S,S]
+        R = torch.complex(torch.cos(pd), torch.sin(pd)).mean(dim=0).abs()
+        return sync, R
+
+    @torch.no_grad()
+    def update(self, phase, da_signal=0.5, surprise_score=None):
+        sync, conf = self.compute_sync(phase)
+        dm = (0.5 + torch.sigmoid(torch.tensor(surprise_score/2.0)).item()) if surprise_score is not None else (0.5 + da_signal)
+        dp = dm * self.eta_pot * conf * F.relu(sync - self.thresh)
+        dd = dm * self.eta_dep * conf * F.relu(self.thresh - sync)
+        self.G.data = ((self.G.data + (dp - dd)) * self.decay).clamp(-1, 1)
+        self.G.data.fill_diagonal_(0)
+
+    def get_sync_metric(self, phase):
+        _, R = self.compute_sync(phase)
+        return R.mean().item()
+
+
+class PrecisionWeightedPC(nn.Module):
+    """独立predictor — v7r2不变"""
+    def __init__(self, d_model, n_layers, hidden_mult=4):
+        super().__init__()
+        h = d_model * hidden_mult
+        n_pairs = max(0, n_layers - 1)
+        self.predictors = nn.ModuleList([
+            nn.Sequential(nn.Linear(d_model, h), nn.LayerNorm(h), nn.ReLU(), nn.Linear(h, d_model*2))
+            for _ in range(n_pairs)
+        ])
+
+    def forward(self, x_prev, x_curr, layer_pair_idx=0):
+        if layer_pair_idx >= len(self.predictors):
+            return torch.tensor(0.0, device=x_prev.device)
+        pred = self.predictors[layer_pair_idx](x_prev)
+        mu, lv = pred.chunk(2, dim=-1)
+        prec = torch.exp(-lv)
+        return (0.5 * (lv + prec * (x_curr.detach() - mu)**2)).mean()
+
+
+================================================================================
+4. 神经调质系统（reset_state接口）
+================================================================================
+
+class NeuromodulatorV7r3(nn.Module):
+    """神经调质 — v7r3，添加reset_state"""
+    def __init__(self, seq_len, d_model, config):
+        super().__init__()
+        nc = config.get('neuromod', {})
+        self.register_buffer('da_ema', torch.tensor(nc.get('da_init', 2.5)))
+        self.register_buffer('da_var', torch.tensor(0.1))
+        self.da_ema_alpha = nc.get('da_ema_alpha', 0.9)
+        self.da_var_alpha = nc.get('da_var_alpha', 0.9)
+        self.da_min = nc.get('da_min', 0.1)
+        self.da_max = nc.get('da_max', 0.9)
+        self.use_cb = nc.get('use_cb', True)
+        self.cb_gain = nc.get('cb_gain', 2.0)
+        self.cb_thresh = nc.get('cb_threshold', 0.25)
+        self.tau_cb = nc.get('tau_cb', 10.0)
+        self.cb_dt = nc.get('cb_dt', 0.05)
+        self.register_buffer('cb_state', torch.zeros(1))
+        self.stp = ExponentialSTP(config.get('model', {}).get('n_heads', 4), d_model, config)
+        self.prev_amp = None
+
+    def compute_da(self, loss):
+        lv = loss.item()
+        self.da_ema.copy_(self.da_ema_alpha * self.da_ema + (1 - self.da_ema_alpha) * lv)
+        diff = lv - self.da_ema.item()
+        self.da_var.copy_(self.da_var_alpha * self.da_var + (1 - self.da_var_alpha) * (diff**2))
+        surprise = diff / (torch.sqrt(self.da_var).item() + 1e-8)
+        return max(self.da_min, min(self.da_max, torch.sigmoid(torch.tensor(surprise)).item()))
+
+    def compute_da_from_surprise(self, score):
+        return max(self.da_min, min(self.da_max, torch.sigmoid(torch.tensor(score / 5.0)).item()))
+
+    def compute_cb(self, sync_metric):
+        if not self.use_cb: return 0.0
+        ci = sync_metric - self.cb_thresh
+        self.cb_state = self.cb_state + self.cb_dt * (-self.cb_state / self.tau_cb + self.cb_gain * max(ci, 0.0))
+        self.cb_state = torch.clamp(self.cb_state, 0.0, 1.0)
+        return self.cb_state.item()
+
+    def compute_stp_step(self, amp):
+        am = amp.mean().item()
+        if self.prev_amp is not None:
+            spike = min(abs(am - self.prev_amp) / (am + 1e-8), 5.0)
+            self.stp.step(torch.tensor([[spike]], device=self.stp.u.device))
+        self.prev_amp = am
+
+    def get_stp_modulation(self):
+        return self.stp.get_modulation_factor()  # [1, G]
+
+    def get_alpha_modulation(self):
+        return 0.5 + torch.sigmoid((self.da_ema - 2.0) / 0.5).item()
+
+    def get_dampening_factor(self):
+        return 1.0 - 0.5 * self.cb_state.item()
+
+    def reset(self):
+        self.da_ema.fill_(2.5); self.da_var.fill_(0.1)
+        self.cb_state.zero_(); self.prev_amp = None
+        self.stp.reset()
+
+
+================================================================================
+5. HormonicBlockV7r3 — STP广播 + G-coupling始终生效（审查补丁修复1,2）
+================================================================================
+
+class HormonicBlockV7r3(nn.Module):
+    """
+    v7r3核心修正:
+      修复1: STP调制去除.item()，正确广播[1,G]→[B,S,D,2]
+      修复2: G-coupling提取到if self.training外部，推理时始终应用
+    """
+    def __init__(self, d_model, seq_len, config):
+        super().__init__()
+        mc = config.get('model', {})
+        self.d_model = d_model; self.seq_len = seq_len
+        self.use_nm = config.get('use_neuromod', True)
+        self.g_strength = config.get('g_coupling_strength', 0.1)
+
+        self.cgl = CGLFieldEvolution(d_model, seq_len,
+            n_steps=mc.get('n_cgl_steps', 10),
+            D0_amp=mc.get('D0_amp', 0.002),
+            D0_phase=mc.get('D0_phase', 0.002),
+            dt=mc.get('cgl_dt', 0.02),
+            noise_scale=mc.get('noise_scale', 0.001))
+        self.hebbian = MetaplasticHebbian(seq_len, config)
+        self.neuromod = NeuromodulatorV7r3(seq_len, d_model, config) if self.use_nm else None
+        self.norm_re = nn.LayerNorm(d_model)
+        self.norm_im = nn.LayerNorm(d_model)
+
+    def forward(self, psi, surprise_score=None):
+        B, S, D, _ = psi.shape
+        alpha_ov = None; D_ov = None; stp_mod = 1.0
+
+        if self.use_nm and self.neuromod is not None:
+            amp = torch.sqrt(psi[...,0]**2 + psi[...,1]**2 + 1e-8)
+            # STP更新
+            self.neuromod.compute_stp_step(amp)
+            # 修复1: STP调制广播 [1,G]→[1,1,G,1]→[1,1,D,1]
+            stp_raw = self.neuromod.get_stp_modulation()  # [1, G]
+            G_groups = stp_raw.shape[1]
+            repeat = D // G_groups
+            assert D % G_groups == 0, f"d_model {D} not divisible by n_groups {G_groups}"
+            stp_mod = stp_raw.view(1, 1, G_groups, 1).repeat_interleave(repeat, dim=2)  # [1,1,D,1]
+
+            # CB + alpha调制
+            phase = torch.atan2(psi[...,1], psi[...,0] + 1e-8)
+            sync = self.hebbian.get_sync_metric(phase)
+            self.neuromod.compute_cb(sync)
+            alpha_ov = self.cgl.alpha * self.neuromod.get_alpha_modulation()
+            D_ov = self.cgl.D0_amp * self.neuromod.get_dampening_factor()
+
+        # CGL演化
+        psi = self.cgl(psi, alpha_eff=alpha_ov, D_amp_override=D_ov, D_phase_override=D_ov)
+
+        # Hebbian update（仅训练）
+        if self.training:
+            phase = torch.atan2(psi[...,1], psi[...,0] + 1e-8)
+            self.hebbian.update(phase, surprise_score=surprise_score)
+
+        # 修复2: G-coupling始终应用（推理时也生效）
+        re, im = psi[...,0], psi[...,1]
+        gre = torch.einsum('ij,bjd->bid', self.hebbian.G.detach(), re)
+        gim = torch.einsum('ij,bjd->bid', self.hebbian.G.detach(), im)
+        psi = torch.stack([re + self.g_strength * gre, im + self.g_strength * gim], dim=-1)
+
+        # STP调制输出（张量广播乘法）
+        psi = psi * stp_mod.to(psi.device)
+
+        # 归一化（分别对re/im，保持相位信息）
+        re_out = self.norm_re(psi[..., 0])
+        im_out = self.norm_im(psi[..., 1])
+        psi = torch.stack([re_out, im_out], dim=-1)
+        return psi
+
+
+================================================================================
+6. HormonicFormerV7r3 — 通用序列架构（移除视觉硬编码）
+================================================================================
+
+class HormonicFormerV7r3(nn.Module):
+    """
+    HormonicFormer v7r3 — 通用序列架构
+    
+    核心变更: 移除patchify/分类头等视觉硬编码
+    架构: Token Embedding → CGL场 → 通用输出
+    
+    输入: [B, S] 整数token IDs 或 [B, S, D] 预计算embedding
+    输出: [B, S, vocab_size] 语言模型logits 或 [B, n_classes] 分类
+    
+    用法:
+      # 语言模型
+      model = HormonicFormerV7r3(vocab_size=50257, d_model=512, ...)
+      logits, loss = model(input_ids, targets)  # [B, S, vocab_size]
+      
+      # 分类（使用pooled输出）
+      logits = model(input_ids)  # [B, n_classes]
+    """
+    def __init__(self, config: dict):
+        super().__init__()
+        mc = config.get('model', {})
+        self.d_model = mc['d_model']
+        self.seq_len = mc.get('seq_len', 196)
+        self.n_layers = mc['n_layers']
+        self.vocab_size = mc.get('vocab_size', 50257)
+        self.n_classes = mc.get('n_classes', None)  # 分类头（可选）
+        self.dropout = mc.get('dropout', 0.1)
+
+        # Token Embedding
+        self.token_embed = nn.Embedding(self.vocab_size, self.d_model * 2)
+        self.pos_embed = nn.Parameter(torch.randn(1, self.seq_len, self.d_model * 2) * 0.02)
+        self.dropout_layer = nn.Dropout(self.dropout)
+
+        # HormonicBlocks
+        self.blocks = nn.ModuleList([
+            HormonicBlockV7r3(self.d_model, self.seq_len, config)
+            for _ in range(self.n_layers)
+        ])
+
+        # PAC
+        if config.get('use_pac', True) and self.n_layers > 1:
+            self.pac = PhaseAmplitudeCoupling(self.n_layers)
+        else:
+            self.pac = None
+
+        # PC loss
+        if config.get('use_pc', True) and self.n_layers > 1:
+            self.pc = PrecisionWeightedPC(self.d_model * 2, self.n_layers)
+            self.pc_weight = config.get('pc_weight', 0.01)
+        else:
+            self.pc = None
+
+        # 输出头
+        self.output_norm = nn.LayerNorm(self.d_model * 2)
+        # LM head: 每个位置预测下一个token
+        self.lm_head = nn.Linear(self.d_model * 2, self.vocab_size, bias=False)
+        # 可选分类头
+        if self.n_classes is not None:
+            self.classifier = nn.Sequential(
+                nn.Linear(self.d_model * 2, self.d_model),
+                nn.GELU(),
+                nn.Dropout(self.dropout),
+                nn.Linear(self.d_model, self.n_classes)
+            )
+
+        self.apply(_init_weights)
+
+
+def _init_weights(m):
+    """Xavier初始化Linear，Normal初始化Embedding"""
+    if isinstance(m, nn.Linear):
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+    elif isinstance(m, nn.Embedding):
+        nn.init.normal_(m.weight, std=0.02)
+
+    def forward(self, input_ids: torch.Tensor, targets: torch.Tensor = None,
+                mode: str = 'lm'):
+        """
+        input_ids: [B, S] 整数token IDs
+        targets: [B, S] 目标token IDs（LM）或 [B] 类别标签（分类）
+        mode: 'lm'（语言模型）或 'classify'（分类）
+        
+        返回:
+          LM模式: (logits [B, S, vocab_size], loss) 或 logits
+          分类模式: (logits [B, n_classes], loss) 或 logits
+        """
+        B, S = input_ids.shape
+        assert S <= self.seq_len, f"Sequence {S} > max {self.seq_len}"
+
+        # Embedding [B, S] → [B, S, D*2]
+        x = self.token_embed(input_ids)
+        x = x + self.pos_embed[:, :S, :]
+        x = self.dropout_layer(x)
+
+        # 转复数场 [B, S, D, 2]
+        psi = x.reshape(B, S, self.d_model, 2)
+
+        # 通过Blocks
+        psi_list = []; pc_losses = []
+        for i, block in enumerate(self.blocks):
+            ss = pc_losses[-1].item() if (len(pc_losses) > 0 and self.pc) else None
+            psi = block(psi, surprise_score=ss)
+            psi_list.append(psi)
+
+            # PAC
+            if self.pac and i > 0:
+                amp = torch.sqrt(psi[...,0]**2 + psi[...,1]**2)
+                mod = self.pac(psi_list[i-1], amp, i)
+                ph = torch.atan2(psi[...,1], psi[...,0] + 1e-8)
+                psi = torch.stack([mod * torch.cos(ph), mod * torch.sin(ph)], dim=-1)
+
+            # PC
+            if self.pc and i > 0:
+                pc_j = self.pc(
+                    psi_list[i-1].reshape(B, S, self.d_model * 2),
+                    psi_list[i].reshape(B, S, self.d_model * 2),
+                    i - 1)
+                pc_losses.append(pc_j)
+
+        # 输出
+        h = self.output_norm(psi.reshape(B, S, self.d_model * 2))
+
+        if mode == 'lm':
+            logits = self.lm_head(h)  # [B, S, vocab_size]
+            if targets is not None:
+                loss = F.cross_entropy(logits.reshape(-1, self.vocab_size),
+                                       targets.reshape(-1))
+                if pc_losses:
+                    loss = loss + self.pc_weight * (sum(pc_losses) / len(pc_losses))
+                return logits, loss
+            return logits
+
+        elif mode == 'classify':
+            pooled = h.mean(dim=1)  # [B, D*2]
+            logits = self.classifier(pooled)  # [B, n_classes]
+            if targets is not None:
+                return logits, F.cross_entropy(logits, targets)
+            return logits
+
+    def reset_state(self):
+        """序列推理前调用，重置所有block的调质状态"""
+        for block in self.blocks:
+            if block.neuromod:
+                block.neuromod.reset()
+
+    def get_diagnostics(self):
+        block = self.blocks[0]
+        nm = block.neuromod
+        alpha_val = block.cgl.alpha.item()
+        limit_r = math.sqrt(max(alpha_val, 0.0)) if alpha_val > 0 else 0.0
+        return {
+            'limit_cycle_r': limit_r,
+            'alpha': alpha_val,
+            'DA': (nm.get_alpha_modulation() - 0.5) if nm else 0.0,
+            'CB': nm.cb_state.item() if nm else 0.0,
+            'STP_eff': nm.stp.get_efficacy().mean().item() if nm else 1.0,
+            'G_sparsity': (block.hebbian.G.data == 0).float().mean().item(),
+        }
+
+
+================================================================================
+7. 验证测试
+================================================================================
+
+def run_tests():
+    print("=" * 60)
+    print("HormonicFormer v7r3 验证")
+    print("=" * 60)
+    results = []
+
+    # Laplacian多维
+    print("\n[Laplacian] 多维输入")
+    lap = DFTLaplacian(196)
+    for shape in [(128, 196), (128, 196, 512), (2, 4, 196, 128)]:
+        x = torch.randn(*shape)
+        y = lap(x)
+        results.append(y.shape == x.shape)
+        print(f"  {shape} -> {y.shape} {'✓' if results[-1] else '✗'}")
+
+    # STP batch
+    print("\n[STP] batch平均")
+    cfg = {'stp': {'U': 0.2, 'tau_f': 1.0, 'tau_d': 3.0, 'dt': 0.05}}
+    stp = ExponentialSTP(8, 512, cfg)
+    stp.step(torch.randn(32, 64).abs())  # [B=32, G=64]
+    results.append(stp.u.shape == (1, 64))
+    print(f"  input[32,64] -> state {stp.u.shape} {'✓' if results[-1] else '✗'}")
+
+    # G-coupling推理
+    print("\n[G-coupling] 推理时生效")
+    block_cfg = {'model': {'d_model': 64, 'seq_len': 16, 'n_layers': 2, 'n_heads': 4,
+                           'n_cgl_steps': 3, 'D0_amp': 0.002, 'D0_phase': 0.002,
+                           'cgl_dt': 0.02, 'noise_scale': 0.0, 'dropout': 0.0},
+                 'use_neuromod': False, 'use_pac': False, 'use_pc': False,
+                 'g_coupling_strength': 0.1, 'hebbian': {}}
+    block = HormonicBlockV7r3(64, 16, block_cfg)
+    block.hebbian.G.data = torch.randn(16, 16) * 0.5  # 非零G
+    psi = torch.randn(2, 16, 64, 2)
+    block.train(False)
+    out = block(psi)
+    results.append(not torch.allclose(out, psi))
+    print(f"  eval模式下G-coupling生效: {not torch.allclose(out, psi)} {'✓' if results[-1] else '✗'}")
+
+    # 通用序列forward
+    print("\n[通用序列] LM forward")
+    model_cfg = {'model': {'d_model': 64, 'seq_len': 64, 'n_layers': 2,
+                           'n_heads': 4, 'vocab_size': 1000, 'dropout': 0.0,
+                           'n_cgl_steps': 3, 'D0_amp': 0.002, 'D0_phase': 0.002,
+                           'cgl_dt': 0.02, 'noise_scale': 0.0},
+                 'use_neuromod': False, 'use_pac': False, 'use_pc': False,
+                 'g_coupling_strength': 0.1, 'hebbian': {}}
+    model = HormonicFormerV7r3(model_cfg)
+    ids = torch.randint(0, 1000, (4, 32))
+    tgt = torch.randint(0, 1000, (4, 32))
+    logits, loss = model(ids, tgt, mode='lm')
+    results.append(logits.shape == (4, 32, 1000) and loss.item() > 0)
+    print(f"  LM: logits={logits.shape}, loss={loss.item():.4f} {'✓' if results[-1] else '✗'}")
+
+    # 分类
+    print("\n[通用序列] 分类 forward")
+    model_cfg['model']['n_classes'] = 10
+    model2 = HormonicFormerV7r3(model_cfg)
+    cls_logits = model2(ids, mode='classify')
+    results.append(cls_logits.shape == (4, 10))
+    print(f"  classify: logits={cls_logits.shape} {'✓' if results[-1] else '✗'}")
+
+    print(f"\n结果: {sum(results)}/{len(results)} 通过")
+    return all(results)
+
+
+if __name__ == '__main__':
+    run_tests()
+
+================================================================================
+配置示例 (config.yaml)
+================================================================================
+
+model:
+  d_model: 512
+  seq_len: 196
+  n_layers: 8
+  n_heads: 8
+  vocab_size: 50257          # GPT-2词表
+  # n_classes: 10            # 如需分类，取消注释
+  dropout: 0.1
+  # CGL参数
+  n_cgl_steps: 10
+  D0_amp: 0.002
+  D0_phase: 0.002
+  cgl_dt: 0.02
+  noise_scale: 0.001
+
+g_coupling_strength: 0.1
+use_neuromod: true
+use_pac: true
+use_pc: true
+pc_weight: 0.01
+
+neuromod:
+  da_init: 2.5
+  da_ema_alpha: 0.9
+  da_var_alpha: 0.9
+  da_min: 0.1
+  da_max: 0.9
+  use_cb: true
+  cb_gain: 2.0
+  cb_threshold: 0.25
+  tau_cb: 10.0
+  cb_dt: 0.05
+
+stp:
+  U: 0.2
+  tau_f: 1.0
+  tau_d: 3.0
+  dt: 0.05
+
+hebbian:
+  eta_potentiate: 0.001
+  eta_depress: 0.0005
+  sync_threshold: 0.3
+  decay: 0.999
+
+================================================================================
+修正清单（v7r2 → v7r3）
+================================================================================
+
+| 问题 | 严重性 | 修正 |
+|------|--------|------|
+| 视觉硬编码 | P0-架构偏离 | 移除patchify/分类头，恢复通用序列输入 |
+| STP .item() | P0-运行时错误 | 去除.item()，正确广播[1,G]→[B,S,D,2] |
+| G-coupling推理缺失 | P0-推理错误 | 提取到if training外部，始终应用 |
+| STP batch维度 | P1-接口隐患 | step()中对batch取平均 |
+| Laplacian注释 | P3-可读性 | 详细说明IDFT符号链 |
+
+架构: Token Embedding → CGL场演化 → LM/分类输出（通用序列）
+所有6条闭环回路保持闭合。
+================================================================================
+EOF

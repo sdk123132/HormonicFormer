@@ -1,0 +1,54 @@
+======================================================================
+Hebbian 可塑性双面性: 小数据利器 vs 大数据毒药
+======================================================================
+
+■ 这是一个全新的论文级发现
+
+在同一个模型架构下,Hebbian可塑性表现出截然相反的效果:
+
++----------------------------------------------------+
+| 小数据 (4350 chars, Char LM)                       |
+|   Hebbian Warmup: PPL 6.67 -> 1.73 (down 74%)     |
+|   Acc: 30.7% -> 80.8% (up 163%)                   |
+|   -> Hebbian是强力加速器                            |
++----------------------------------------------------+
+
++----------------------------------------------------+
+| 大数据 (118M tokens, WikiText-103)                  |
+|   With Hebbian: Val/Train PPL = 504x (Step 8000)   |
+|   Without Hebbian: Val/Train PPL = 1.18x (Step 4000)|
+|   -> Hebbian导致灾难性过拟合                        |
++----------------------------------------------------+
+
+■ 为什么?
+
+  1. Hebbian G矩阵是无梯度更新的权重
+     -> 不受weight_decay/dropout正则化约束
+     -> 小数据时: 快速记忆少量模式 (有益)
+     -> 大数据时: 过度记忆训练样本 (有害)
+
+  2. G矩阵随训练单调增长
+     -> 小数据: 10 epochs后G稳定 (数据量有限)
+     -> 大数据: G持续膨胀,模型容量无限增大
+
+  3. 生物学类比:
+     -> 关键期可塑性 (小数据 = 发育期)
+     -> 成熟期稳定 (大数据 = 成年期)
+     -> Warmup完美对应这一生物规律
+
+■ 论文论点
+
+  "Hebbian plasticity acts as a powerful inductive bias
+   in low-data regimes, but becomes a catastrophic
+   memorization mechanism when data is abundant.
+   The Warmup schedule mirrors biological critical periods,
+   leveraging early plasticity while preventing late overfitting."
+
+■ 数据支撑
+
+| 场景 | Hebbian效果 | Val/Train比 | 结论 |
+|------|------------|------------|------|
+| Char LM 4350 chars | PPL -74% | ~1.0x | 极有益 |
+| Copy Task 3 epochs | Acc -14% | - | 短任务有害 |
+| WikiText 118M tokens | Val爆炸 | 504x | 灾难性 |
+| WikiText No Hebbian | Val稳定 | 1.18x | 泛化良好 |

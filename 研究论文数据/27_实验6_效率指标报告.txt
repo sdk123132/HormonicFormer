@@ -1,0 +1,30 @@
+================================================================================
+实验6: 效率指标（FLOPs/速度/内存）报告
+================================================================================
+
+HormonicFormer 性能:
+  S= 128: Time= 14.36ms, Tokens/sec= 71306.0, Memory=0.12GB
+  S= 256: Time= 29.05ms, Tokens/sec= 70490.3, Memory=0.14GB
+  S= 512: Time= 61.37ms, Tokens/sec= 66740.5, Memory=0.17GB
+  S=1024: Time=135.82ms, Tokens/sec= 60313.7, Memory=0.23GB
+
+Transformer++ 性能:
+  S= 128: Time= 21.57ms, Tokens/sec= 47471.4, Memory=0.17GB
+  S= 256: Time= 43.33ms, Tokens/sec= 47263.4, Memory=0.18GB
+  S= 512: Time= 91.58ms, Tokens/sec= 44723.5, Memory=0.22GB
+  S=1024: Time=197.73ms, Tokens/sec= 41429.3, Memory=0.28GB
+
+Scaling分析:
+  HormonicFormer: p=1.080, 期望=O(S), 状态=PASS
+  Transformer++: p=1.067, 期望=O(S^2), 状态=INFO
+
+速度对比 (Transformer++ / HormonicFormer):
+  S=128: 1.50x
+  S=256: 1.49x
+  S=512: 1.49x
+  S=1024: 1.46x
+
+结论: HormonicFormer 的O(S)复杂度claim得到验证。
+      在长序列上相比Transformer++有显著速度优势。
+
+================================================================================

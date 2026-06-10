@@ -1,0 +1,1117 @@
+{
+  "n_trials": 100,
+  "seq_len": 64,
+  "d_model": 64,
+  "seed": 42,
+  "trials": [
+    {
+      "trial": 0,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 84.99486541748047,
+        "cosine": 0.8818594440817833
+      }
+    },
+    {
+      "trial": 1,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 91.52659606933594,
+        "cosine": 1.0226067807525396
+      }
+    },
+    {
+      "trial": 2,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 68.73161315917969,
+        "cosine": 0.5766698122024536
+      }
+    },
+    {
+      "trial": 3,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 65.45018005371094,
+        "cosine": 0.522920548915863
+      }
+    },
+    {
+      "trial": 4,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 80.26521301269531,
+        "cosine": 0.786445826292038
+      }
+    },
+    {
+      "trial": 5,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 89.94965362548828,
+        "cosine": 0.9876727052032948
+      }
+    },
+    {
+      "trial": 6,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 90.64605712890625,
+        "cosine": 1.0030254125595093
+      }
+    },
+    {
+      "trial": 7,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 76.85948944091797,
+        "cosine": 0.7211223840713501
+      }
+    },
+    {
+      "trial": 8,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 92.48064422607422,
+        "cosine": 1.044036839157343
+      }
+    },
+    {
+      "trial": 9,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 82.2540283203125,
+        "cosine": 0.8259016871452332
+      }
+    },
+    {
+      "trial": 10,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 78.9610366821289,
+        "cosine": 0.7610966861248016
+      }
+    },
+    {
+      "trial": 11,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 90.18191528320312,
+        "cosine": 0.9927799412980676
+      }
+    },
+    {
+      "trial": 12,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 82.4236068725586,
+        "cosine": 0.8293107897043228
+      }
+    },
+    {
+      "trial": 13,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 92.98657989501953,
+        "cosine": 1.0554910339415073
+      }
+    },
+    {
+      "trial": 14,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 83.54280853271484,
+        "cosine": 0.8519856333732605
+      }
+    },
+    {
+      "trial": 15,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 82.49246215820312,
+        "cosine": 0.8306969702243805
+      }
+    },
+    {
+      "trial": 16,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 83.9235610961914,
+        "cosine": 0.8597690463066101
+      }
+    },
+    {
+      "trial": 17,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 88.69844818115234,
+        "cosine": 0.9603865742683411
+      }
+    },
+    {
+      "trial": 18,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 84.90254974365234,
+        "cosine": 0.8799450770020485
+      }
+    },
+    {
+      "trial": 19,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 71.32041931152344,
+        "cosine": 0.6209288835525513
+      }
+    },
+    {
+      "trial": 20,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 79.01748657226562,
+        "cosine": 0.7621852457523346
+      }
+    },
+    {
+      "trial": 21,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 86.65071868896484,
+        "cosine": 0.9165545627474785
+      }
+    },
+    {
+      "trial": 22,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 87.26713562011719,
+        "cosine": 0.9296412989497185
+      }
+    },
+    {
+      "trial": 23,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 90.15803527832031,
+        "cosine": 0.9922542017884552
+      }
+    },
+    {
+      "trial": 24,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 76.13736724853516,
+        "cosine": 0.707635760307312
+      }
+    },
+    {
+      "trial": 25,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 79.64759826660156,
+        "cosine": 0.7743893563747406
+      }
+    },
+    {
+      "trial": 26,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 76.43341064453125,
+        "cosine": 0.7131492793560028
+      }
+    },
+    {
+      "trial": 27,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 82.866943359375,
+        "cosine": 0.8382558077573776
+      }
+    },
+    {
+      "trial": 28,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 90.59709930419922,
+        "cosine": 1.001942137721926
+      }
+    },
+    {
+      "trial": 29,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.7881393432617188e-07
+      },
+      "dist_transformed": {
+        "euclidean": 85.42991638183594,
+        "cosine": 0.8909104540944099
+      }
+    },
+    {
+      "trial": 30,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 82.23320770263672,
+        "cosine": 0.8254838287830353
+      }
+    },
+    {
+      "trial": 31,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 82.74986267089844,
+        "cosine": 0.8358890414237976
+      }
+    },
+    {
+      "trial": 32,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 80.69558715820312,
+        "cosine": 0.7949021309614182
+      }
+    },
+    {
+      "trial": 33,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 94.7364273071289,
+        "cosine": 1.0955898985266685
+      }
+    },
+    {
+      "trial": 34,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 82.13585662841797,
+        "cosine": 0.8235304355621338
+      }
+    },
+    {
+      "trial": 35,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 75.13166046142578,
+        "cosine": 0.6890648603439331
+      }
+    },
+    {
+      "trial": 36,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 83.46959686279297,
+        "cosine": 0.8504929840564728
+      }
+    },
+    {
+      "trial": 37,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 84.84952545166016,
+        "cosine": 0.8788461685180664
+      }
+    },
+    {
+      "trial": 38,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 89.14515686035156,
+        "cosine": 0.9700842313468456
+      }
+    },
+    {
+      "trial": 39,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 83.23837280273438,
+        "cosine": 0.8457873314619064
+      }
+    },
+    {
+      "trial": 40,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 80.40309143066406,
+        "cosine": 0.7891500294208527
+      }
+    },
+    {
+      "trial": 41,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 81.14286804199219,
+        "cosine": 0.8037384152412415
+      }
+    },
+    {
+      "trial": 42,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 76.87127685546875,
+        "cosine": 0.7213437259197235
+      }
+    },
+    {
+      "trial": 43,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 81.46605682373047,
+        "cosine": 0.810153603553772
+      }
+    },
+    {
+      "trial": 44,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 85.2071304321289,
+        "cosine": 0.8862697333097458
+      }
+    },
+    {
+      "trial": 45,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 73.11827087402344,
+        "cosine": 0.6526282131671906
+      }
+    },
+    {
+      "trial": 46,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 84.03669738769531,
+        "cosine": 0.86208875477314
+      }
+    },
+    {
+      "trial": 47,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 82.41500091552734,
+        "cosine": 0.8291375786066055
+      }
+    },
+    {
+      "trial": 48,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 89.27847290039062,
+        "cosine": 0.9729881323873997
+      }
+    },
+    {
+      "trial": 49,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 82.92701721191406,
+        "cosine": 0.8394718319177628
+      }
+    },
+    {
+      "trial": 50,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.7881393432617188e-07
+      },
+      "dist_transformed": {
+        "euclidean": 84.3515396118164,
+        "cosine": 0.8685605973005295
+      }
+    },
+    {
+      "trial": 51,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 80.54326629638672,
+        "cosine": 0.7919039130210876
+      }
+    },
+    {
+      "trial": 52,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 81.42704772949219,
+        "cosine": 0.8093782067298889
+      }
+    },
+    {
+      "trial": 53,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 76.49996185302734,
+        "cosine": 0.7143919169902802
+      }
+    },
+    {
+      "trial": 54,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 79.2540283203125,
+        "cosine": 0.7667551040649414
+      }
+    },
+    {
+      "trial": 55,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 84.51880645751953,
+        "cosine": 0.8720085620880127
+      }
+    },
+    {
+      "trial": 56,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 79.74154663085938,
+        "cosine": 0.7762172520160675
+      }
+    },
+    {
+      "trial": 57,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 83.21733093261719,
+        "cosine": 0.8453596234321594
+      }
+    },
+    {
+      "trial": 58,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.7881393432617188e-07
+      },
+      "dist_transformed": {
+        "euclidean": 87.03446960449219,
+        "cosine": 0.9246909916400909
+      }
+    },
+    {
+      "trial": 59,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 86.78034210205078,
+        "cosine": 0.9192990660667419
+      }
+    },
+    {
+      "trial": 60,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 84.84210968017578,
+        "cosine": 0.8786925077438354
+      }
+    },
+    {
+      "trial": 61,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 83.21826171875,
+        "cosine": 0.8453788757324219
+      }
+    },
+    {
+      "trial": 62,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 78.41508483886719,
+        "cosine": 0.7506083250045776
+      }
+    },
+    {
+      "trial": 63,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 78.00489044189453,
+        "cosine": 0.7427755892276764
+      }
+    },
+    {
+      "trial": 64,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 93.79818725585938,
+        "cosine": 1.0739967823028564
+      }
+    },
+    {
+      "trial": 65,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 81.29258728027344,
+        "cosine": 0.8067071586847305
+      }
+    },
+    {
+      "trial": 66,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 80.98222351074219,
+        "cosine": 0.8005591183900833
+      }
+    },
+    {
+      "trial": 67,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 79.32660675048828,
+        "cosine": 0.7681600898504257
+      }
+    },
+    {
+      "trial": 68,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 91.55413055419922,
+        "cosine": 1.0232221260666847
+      }
+    },
+    {
+      "trial": 69,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 85.41607666015625,
+        "cosine": 0.8906217887997627
+      }
+    },
+    {
+      "trial": 70,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 80.01675415039062,
+        "cosine": 0.7815843224525452
+      }
+    },
+    {
+      "trial": 71,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 84.408203125,
+        "cosine": 0.869727611541748
+      }
+    },
+    {
+      "trial": 72,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 90.55947875976562,
+        "cosine": 1.0011101001873612
+      }
+    },
+    {
+      "trial": 73,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 78.1898193359375,
+        "cosine": 0.7463016510009766
+      }
+    },
+    {
+      "trial": 74,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 100.32869720458984,
+        "cosine": 1.2287522107362747
+      }
+    },
+    {
+      "trial": 75,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 86.61461639404297,
+        "cosine": 0.9157911986112595
+      }
+    },
+    {
+      "trial": 76,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 78.88612365722656,
+        "cosine": 0.7596528381109238
+      }
+    },
+    {
+      "trial": 77,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 89.19485473632812,
+        "cosine": 0.9711665026843548
+      }
+    },
+    {
+      "trial": 78,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 85.6168441772461,
+        "cosine": 0.8948134407401085
+      }
+    },
+    {
+      "trial": 79,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.7881393432617188e-07
+      },
+      "dist_transformed": {
+        "euclidean": 68.58568572998047,
+        "cosine": 0.5742236971855164
+      }
+    },
+    {
+      "trial": 80,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 90.31648254394531,
+        "cosine": 0.9957447838969529
+      }
+    },
+    {
+      "trial": 81,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 85.82684326171875,
+        "cosine": 0.8992082253098488
+      }
+    },
+    {
+      "trial": 82,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 87.65739440917969,
+        "cosine": 0.937974538654089
+      }
+    },
+    {
+      "trial": 83,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 73.1165771484375,
+        "cosine": 0.6525978744029999
+      }
+    },
+    {
+      "trial": 84,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 83.56804656982422,
+        "cosine": 0.8525004237890244
+      }
+    },
+    {
+      "trial": 85,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 71.91785430908203,
+        "cosine": 0.631375253200531
+      }
+    },
+    {
+      "trial": 86,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 86.36141967773438,
+        "cosine": 0.9104446768760681
+      }
+    },
+    {
+      "trial": 87,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 79.80274200439453,
+        "cosine": 0.777409091591835
+      }
+    },
+    {
+      "trial": 88,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 80.59426879882812,
+        "cosine": 0.792907327413559
+      }
+    },
+    {
+      "trial": 89,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 80.44549560546875,
+        "cosine": 0.7899824678897858
+      }
+    },
+    {
+      "trial": 90,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 78.16290283203125,
+        "cosine": 0.745788037776947
+      }
+    },
+    {
+      "trial": 91,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 5.960464477539063e-08
+      },
+      "dist_transformed": {
+        "euclidean": 93.14680480957031,
+        "cosine": 1.0591315738856792
+      }
+    },
+    {
+      "trial": 92,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 87.49951171875,
+        "cosine": 0.934598870575428
+      }
+    },
+    {
+      "trial": 93,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 83.78861999511719,
+        "cosine": 0.8570063710212708
+      }
+    },
+    {
+      "trial": 94,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 0.0
+      },
+      "dist_transformed": {
+        "euclidean": 90.38105010986328,
+        "cosine": 0.9971690969541669
+      }
+    },
+    {
+      "trial": 95,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 87.10523986816406,
+        "cosine": 0.9261954501271248
+      }
+    },
+    {
+      "trial": 96,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 84.28036499023438,
+        "cosine": 0.8670952320098877
+      }
+    },
+    {
+      "trial": 97,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 93.75491333007812,
+        "cosine": 1.0730061084032059
+      }
+    },
+    {
+      "trial": 98,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": -2.384185791015625e-07
+      },
+      "dist_transformed": {
+        "euclidean": 83.13478088378906,
+        "cosine": 0.8436833173036575
+      }
+    },
+    {
+      "trial": 99,
+      "dist_original": {
+        "euclidean": 0.0,
+        "cosine": 1.1920928955078125e-07
+      },
+      "dist_transformed": {
+        "euclidean": 86.3051986694336,
+        "cosine": 0.9092596396803856
+      }
+    }
+  ],
+  "status": "FAIL",
+  "statistics": {
+    "correlation": NaN,
+    "p_value": NaN,
+    "original_mean": 0.0,
+    "original_std": 0.0,
+    "transformed_mean": 83.41834663391113,
+    "transformed_std": 5.995669744862728
+  }
+}

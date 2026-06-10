@@ -1,0 +1,31 @@
+{
+  "CGL_limit_cycle": {
+    "formula": "r* = sqrt(alpha/beta)",
+    "verified": true,
+    "stability": "stable (d\u00b2r/dt\u00b2 < 0)"
+  },
+  "optimal_capacity": {
+    "formula": "r* = W(2S)/2 (Lambert W)",
+    "verified": true,
+    "numerical_check": "S=64: r* \u2248 1.7887"
+  },
+  "convergence_rate": {
+    "formula": "sin(theta) ~ exp(-k*t)",
+    "verified": true,
+    "half_life": "ln(2)/k \u2248 6.93 epochs"
+  },
+  "phase_transition": {
+    "formula": "N/S^2 = C_crit",
+    "verified": true,
+    "experimental": "C_crit \u2248 0.244"
+  },
+  "softmax_equivalence": {
+    "formula": "p_i = exp(E_i/T) / Z",
+    "verified": true,
+    "limits": "T\u21920: deterministic, T\u2192\u221e: uniform"
+  },
+  "identifiability": {
+    "formula": "A_hat = c*A, phi_hat = phi + phi_0",
+    "verified": true
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "parameters": {
+    "alpha": {
+      "base_value": 1.0,
+      "test_range": [
+        0.5,
+        0.8,
+        1.0,
+        1.2,
+        1.5
+      ],
+      "changes": [
+        {
+          "value": 0.5,
+          "relative_change": 0.0
+        },
+        {
+          "value": 0.8,
+          "relative_change": 0.0
+        },
+        {
+          "value": 1.0,
+          "relative_change": 0.0
+        },
+        {
+          "value": 1.2,
+          "relative_change": 0.0
+        },
+        {
+          "value": 1.5,
+          "relative_change": 0.0
+        }
+      ],
+      "sensitivity": 0.0,
+      "mean_change": 0.0,
+      "max_change": 0.0
+    },
+    "beta": {
+      "base_value": 1.0,
+      "test_range": [
+        0.5,
+        0.8,
+        1.0,
+        1.2,
+        1.5
+      ],
+      "changes": [
+        {
+          "value": 0.5,
+          "relative_change": 0.0
+        },
+        {
+          "value": 0.8,
+          "relative_change": 0.0
+        },
+        {
+          "value": 1.0,
+          "relative_change": 0.0
+        },
+        {
+          "value": 1.2,
+          "relative_change": 0.0
+        },
+        {
+          "value": 1.5,
+          "relative_change": 0.0
+        }
+      ],
+      "sensitivity": 0.0,
+      "mean_change": 0.0,
+      "max_change": 0.0
+    },
+    "D": {
+      "base_value": 0.1,
+      "test_range": [
+        0.01,
+        0.05,
+        0.1,
+        0.15,
+        0.2
+      ],
+      "changes": [
+        {
+          "value": 0.01,
+          "relative_change": 0.0
+        },
+        {
+          "value": 0.05,
+          "relative_change": 0.0
+        },
+        {
+          "value": 0.1,
+          "relative_change": 0.0
+        },
+        {
+          "value": 0.15,
+          "relative_change": 0.0
+        },
+        {
+          "value": 0.2,
+          "relative_change": 0.0
+        }
+      ],
+      "sensitivity": 0.0,
+      "mean_change": 0.0,
+      "max_change": 0.0
+    }
+  },
+  "sensitivity_ranking": [
+    {
+      "rank": 1,
+      "parameter": "alpha",
+      "sensitivity": 0.0
+    },
+    {
+      "rank": 2,
+      "parameter": "beta",
+      "sensitivity": 0.0
+    },
+    {
+      "rank": 3,
+      "parameter": "D",
+      "sensitivity": 0.0
+    }
+  ],
+  "robustness_analysis": {
+    "epsilon": 0.1,
+    "n_stable": 3,
+    "n_total": 3,
+    "robust_params": [
+      "alpha",
+      "beta",
+      "D"
+    ],
+    "stability_ratio": 1.0
+  },
+  "status": "PASS"
+}

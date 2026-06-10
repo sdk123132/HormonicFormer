@@ -1,0 +1,33 @@
+# Model checkpoints (46GB+)
+*.pt
+*.pth
+*.ckpt
+
+# Data files
+*.npy
+*.tar.gz
+*.gz
+wikitext103_raw.txt
+wikitext103_tokens.npy
+
+# Large binary data
+data/FashionMNIST/
+data/cifar-10-batches-py/
+data/cifar-10-python.tar.gz
+data/wikitext2_train.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# TensorBoard
+runs/*/events.out.tfevents.*

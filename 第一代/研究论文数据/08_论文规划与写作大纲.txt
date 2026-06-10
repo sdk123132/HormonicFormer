@@ -1,0 +1,65 @@
+======================================================================
+论文写作规划
+======================================================================
+
+■ 论文结构
+
+S1. Introduction
+  - 动机: Transformer缺乏生物学对应
+  - 问题: 能否用物理场方程替代注意力?
+  - 贡献: CGL场 + Hebbian Warmup + 消融 + 泛化分析
+
+S2. Related Work
+  - Neural ODEs / PDE-based models
+  - Bio-inspired models (Hebbian, E/I balance)
+  - Sequence models (Transformer, SSM/Mamba)
+
+S3. Method
+  S3.1 CGL Field Evolution
+  S3.2 Hebbian Plasticity
+  S3.3 Neuromodulation
+  S3.4 Hebbian Warmup Schedule
+
+S4. Experiments
+  S4.1 Copy Task (结构化记忆)
+  S4.2 Character-Level LM
+  S4.3 WikiText-103 Scaling
+  S4.4 Ablation Study
+  S4.5 Hebbian 双面性分析
+
+S5. Results
+S6. Discussion & Limitations
+S7. Conclusion
+
+■ 核心图表
+
+Fig 1: 架构图 (HormonicBlock)
+Fig 2: CGL场演化可视化
+Fig 3: Hebbian Warmup PPL曲线
+Fig 4: 消融实验柱状图
+Fig 5: Hebbian双面性 (小数据vs大数据)
+Fig 6: Val/Train PPL比对比图
+Fig 7: Copy Task长度泛化曲线
+
+Table 1: 模型规格对比
+Table 2: Copy Task结果
+Table 3: 消融实验
+Table 4: WikiText-103结果
+Table 5: Hebbian Warmup调度
+
+■ 待补实验 (按优先级)
+
+P0 - 必须:
+  [ ] Pure CGL跑完 (Step 10000) -> 目标Val PPL<700
+  [ ] GPT-2 baseline同配置对比
+  [ ] PTB/enwik8标准数据集验证Hebbian Warmup
+
+P1 - 应该:
+  [ ] CGL场演化可视化
+  [ ] Copy Task S=1024/2048
+  [ ] 计算效率对比表 (FLOPs/token)
+
+P2 - 加分:
+  [ ] Hebbian Warmup调度消融
+  [ ] 与SSM (Mamba/S4) 对比
+  [ ] 超参敏感性分析

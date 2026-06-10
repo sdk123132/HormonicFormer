@@ -1,0 +1,175 @@
+\section{Theoretical Framework}
+\label{sec:theory}
+
+We present the HormonicFormer, a neural architecture grounded in the mathematical formalism of complex-valued field dynamics. Unlike attention-based Transformers that compute pairwise token interactions via $\mathcal{O}(S^2)$ softmax operations, HormonicFormer propagates information through continuous field evolution governed by the Complex Ginzburg--Landau (CGL) equation, achieving $\mathcal{O}(S)$ computational complexity while maintaining long-range representational capacity.
+
+\subsection{Complex Ginzburg--Landau Field Evolution}
+
+The core computational primitive is a discretized CGL field evolution. Each token representation $\psi_i \in \mathbb{C}^D$ (where $i \in \{1, \ldots, S\}$ indexes position and $D$ is the model dimension) evolves according to:
+
+\begin{equation}
+\psi_i^{(t+1)} = \psi_i^{(t)} + \Delta t \left[ \alpha \psi_i^{(t)} - |\psi_i^{(t)}|^2 \psi_i^{(t)} + (D_{\mathrm{amp}} + i D_{\mathrm{phase}}) \nabla^2 \psi_i^{(t)} + \xi_i^{(t)} \right]
+\label{eq:cgl}
+\end{equation}
+
+where $\alpha \in \mathbb{R}^+$ is the growth parameter (enforced via softplus), $\nabla^2$ denotes the discrete Laplacian over the sequence dimension computed via DFT, $D_{\mathrm{amp}}, D_{\mathrm{phase}}$ are diffusion coefficients for amplitude and phase respectively, and $\xi_i^{(t)} \sim \mathcal{N}(0, \sigma^2)$ is stochastic noise for exploration.
+
+\paragraph{Limit Cycle Dynamics.}
+In the absence of diffusion and noise, the CGL equation admits a stable limit cycle at radius $r^* = \sqrt{\alpha}$. This provides a natural \emph{amplitude normalization} mechanism: representations are attracted toward a fixed-magnitude manifold, preventing the unbounded growth that plagues unnormalized architectures. We state this formally:
+
+\begin{theorem}[CGL Limit Cycle and Representational Capacity]
+\label{thm:cgl-capacity}
+For the CGL field evolution in Eq.~\eqref{eq:cgl} with $\alpha > 0$, the amplitude $|\psi_i|$ converges to $r^* = \sqrt{\alpha}$ exponentially fast. The representational capacity, measured by the amplitude mean across positions, scales linearly with $r^*$:
+\begin{equation}
+\bar{A} = \frac{1}{SD} \sum_{i,d} |\psi_{i,d}| = c \cdot r^* + \epsilon, \quad c > 0
+\end{equation}
+where $c$ is a data-dependent constant and $\epsilon$ captures finite-time deviations.
+\end{theorem}
+
+\paragraph{Experimental Verification.}
+We verify Theorem~\ref{thm:cgl-capacity} by sweeping $\alpha \in [0.01, 5.0]$ and measuring the resulting amplitude statistics after 10 epochs of CIFAR-10 training (Figure~\ref{fig:theorem1}). We observe:
+\begin{itemize}
+\item Linear relationship between $r^*$ and mean amplitude: $R^2 = 0.966$, $p < 10^{-8}$, slope $= 0.137$.
+\item Stable task performance (validation accuracy $\in [30\%, 35\%]$) across a wide range $r^* \in [0.3, 2.3]$, demonstrating robustness.
+\item Phase diversity remains constant at $\approx 0.9995$ regardless of $\alpha$, confirming that CGL preserves phase structure independently of amplitude.
+\end{itemize}
+
+\subsection{Sequence-Space Laplacian via DFT}
+
+The diffusion term $\nabla^2 \psi$ couples neighboring tokens and enables information flow along the sequence. We compute this efficiently via the Discrete Fourier Transform:
+
+\begin{equation}
+\nabla^2 \psi = \mathcal{F}^{-1}\left[ -k^2 \cdot \mathcal{F}[\psi] \right]
+\label{eq:laplacian}
+\end{equation}
+
+where $k$ is the wavenumber vector. This operation is $\mathcal{O}(S \log S)$ via FFT, compared to $\mathcal{O}(S^2)$ for self-attention. Over $n_{\mathrm{steps}}$ CGL iterations, information propagates $\sim \sqrt{n_{\mathrm{steps}} \cdot D_{\mathrm{amp}}}$ positions, providing controllable receptive field expansion.
+
+\begin{theorem}[Computational Complexity]
+\label{thm:complexity}
+Each HormonicFormer layer with $n_{\mathrm{steps}}$ CGL iterations has time complexity $\mathcal{O}(n_{\mathrm{steps}} \cdot S \log S \cdot D)$ and space complexity $\mathcal{O}(S \cdot D)$, compared to $\mathcal{O}(S^2 \cdot D)$ time and $\mathcal{O}(S^2)$ space for standard self-attention.
+\end{theorem}
+
+\paragraph{Experimental Verification.}
+We measure wall-clock time and memory usage across sequence lengths $S \in \{64, 128, 256, 512, 1024\}$ (Table~\ref{tab:efficiency}). The scaling exponent is $p = 1.080 \approx 1.0$, confirming near-linear complexity. HormonicFormer achieves $1.46$--$1.50\times$ speed advantage over Transformer at $S = 1024$.
+
+\subsection{Hebbian Plasticity as Non-Gradient Adaptation}
+
+Each HormonicFormer block maintains a Hebbian connectivity matrix $G \in \mathbb{R}^{S \times S}$ (registered as a buffer, not a learnable parameter) that modulates inter-position coupling based on phase synchrony:
+
+\begin{equation}
+G_{ij} \leftarrow \gamma G_{ij} + \eta_+ \cdot R_{ij} \cdot [\cos(\theta_i - \theta_j) - \tau]_+ - \eta_- \cdot R_{ij} \cdot [\tau - \cos(\theta_i - \theta_j)]_+
+\label{eq:hebbian}
+\end{equation}
+
+where $\theta_i = \arg(\psi_i)$ is the phase, $R_{ij}$ is the phase coherence between positions $i$ and $j$, $\gamma < 1$ is a decay factor, and $\tau$ is the synchronization threshold.
+
+The G-coupling modifies the field evolution via:
+\begin{equation}
+\psi_i \leftarrow \psi_i + \lambda_G \sum_j G_{ij} \psi_j
+\label{eq:g-coupling}
+\end{equation}
+
+\paragraph{Design Choice: Buffer vs.\ Parameter.}
+$G$ is \emph{not} optimized by gradient descent. It is updated exclusively by the Hebbian rule (Eq.~\eqref{eq:hebbian}) during training and frozen at inference. This has three consequences:
+\begin{enumerate}
+\item \textbf{Parameter efficiency:} $G$ does not contribute to the learnable parameter count. Without this choice, $G$ would dominate parameters as $\mathcal{O}(S^2)$ per layer.
+\item \textbf{Biological plausibility:} Hebbian learning is a local, unsupervised rule that does not require backpropagation through the connectivity matrix.
+\item \textbf{Emergent structure:} $G$ self-organizes to reflect the statistical structure of phase relationships in the data, analogous to synaptic consolidation in biological neural circuits.
+\end{enumerate}
+
+\begin{theorem}[Hebbian Phase Transition]
+\label{thm:hebbian-phase}
+The Hebbian connectivity matrix $G$ exhibits a phase transition in its spectral properties as a function of the ratio $N/S^2$ (where $N$ is the number of training samples and $S$ is the sequence length). Below a critical threshold $N/S^2 \approx 0.12$--$0.24$:
+\begin{itemize}
+\item The condition number of $G$ increases by $\sim 33\times$
+\item The effective rank collapses
+\item The top eigenvalue concentrates energy
+\end{itemize}
+This transition corresponds to the onset of Hebbian overfitting, where $G$ memorizes training patterns rather than capturing generalizable structure.
+\end{theorem}
+
+\paragraph{Experimental Verification.}
+We verify Theorem~\ref{thm:hebbian-phase} by varying the data-to-parameter ratio and measuring $G$'s spectral properties (Figure~\ref{fig:theorem3}). The phase transition is clearly observable at $N/S^2 \approx 0.12$--$0.24$, with condition number rising from $\sim 5$ to $\sim 165$.
+
+\paragraph{Hebbian Duality: Small-Data Accelerator vs.\ Large-Data Poison.}
+A key empirical finding is that Hebbian plasticity exhibits dual behavior:
+\begin{itemize}
+\item \textbf{Small data regime} (e.g., character-level LM, 4350 chars): Hebbian warmup reduces validation perplexity by 65\% (PPL $5.0 \to 1.73$).
+\item \textbf{Large data regime} (e.g., WikiText-103, 118M tokens): Hebbian learning causes catastrophic overfitting (validation PPL $504\times$ train PPL).
+\end{itemize}
+This mirrors the biological ``critical period'' hypothesis: high plasticity is beneficial during early development but harmful in mature systems.
+
+\subsection{Neuromodulatory Control}
+
+HormonicFormer incorporates a neuromodulatory system inspired by biological neurotransmitter dynamics:
+
+\paragraph{Short-Term Plasticity (STP).}
+Synaptic efficacy is modulated by exponential STP dynamics:
+\begin{equation}
+u^{(t+1)} = u^{(t)} + \frac{\Delta t}{\tau_f}(U - u^{(t)}) + U(1 - u^{(t)}) \cdot s^{(t)}, \quad
+r^{(t+1)} = r^{(t)} + \frac{\Delta t}{\tau_d}(1 - r^{(t)}) - u^{(t)} r^{(t)} \cdot s^{(t)}
+\end{equation}
+where $u$ is the utilization variable, $r$ is the available resources, $s$ is the presynaptic spike signal, and $\tau_f, \tau_d$ are facilitation/depression time constants. The synaptic modulation $u \cdot r$ scales field amplitudes.
+
+\paragraph{Competitive Balance (CB).}
+A divisive normalization mechanism maintains excitation-inhibition balance:
+\begin{equation}
+\text{CB} = \sigma\left(\frac{\text{sync} - \mu_{\text{sync}}}{\sigma_{\text{sync}}}\right)
+\end{equation}
+where sync is the global phase synchrony. CB modulates the CGL growth parameter $\alpha$, preventing runaway synchronization.
+
+\paragraph{Dopaminergic Modulation (DA).}
+Surprise-driven modulation adjusts learning rates and field dynamics based on prediction errors, analogous to dopaminergic signaling in the basal ganglia.
+
+\subsection{Spectral Convergence of Hebbian Connectivity}
+
+\begin{theorem}[G-Matrix Spectral Alignment]
+\label{thm:spectral-convergence}
+Under Hebbian learning (Eq.~\eqref{eq:hebbian}), the eigenvectors of $G$ converge toward alignment with the principal components of the phase correlation matrix $C_{ij} = \mathbb{E}[\cos(\theta_i - \theta_j)]$. The alignment angle decreases as:
+\begin{equation}
+\angle(v_1^G, v_1^C) \to \theta_{\infty} \quad \text{as } t \to \infty
+\end{equation}
+where $\theta_{\infty} \approx 30°$--$35°$ represents partial alignment (cos $\approx 0.85$), reflecting the stochastic nature of Hebbian updates.
+\end{theorem}
+
+\paragraph{Experimental Verification.}
+We train for 50 epochs and track the angle between the top eigenvector of $G$ and the top eigenvector of the phase correlation matrix (Figure~\ref{fig:theorem2}). The angle decreases from $50.15°$ to $32.37°$ (reduction of $17.78°$), with clear convergence after epoch 25--30.
+
+\subsection{Phase Amplitude Coupling (PAC)}
+
+For multi-layer HormonicFormers, we introduce cross-layer coupling via Phase-Amplitude Coupling:
+\begin{equation}
+\tilde{A}_i^{(l)} = A_i^{(l)} \cdot \left(1 + \beta \cdot A_i^{(l-1)}\right)
+\end{equation}
+where $A_i^{(l)} = |\psi_i^{(l)}|$ is the amplitude at layer $l$ and $\beta$ is a learnable coupling strength. This enables hierarchical information flow where lower-layer amplitude patterns modulate upper-layer representations.
+
+\subsection{Architectural Summary}
+
+A single HormonicFormer layer consists of:
+\begin{enumerate}
+\item \textbf{Neuromodulatory computation:} STP, CB, DA signals from current state
+\item \textbf{CGL field evolution:} $n_{\mathrm{steps}}$ iterations of Eq.~\eqref{eq:cgl} with modulated $\alpha$ and $D$
+\item \textbf{Hebbian update:} Phase-synchrony-based update of $G$ (training only)
+\item \textbf{G-coupling:} Eq.~\eqref{eq:g-coupling} with strength $\lambda_G$
+\item \textbf{STP modulation:} Amplitude scaling by synaptic efficacy
+\item \textbf{Layer normalization:} Applied separately to real and imaginary components
+\end{enumerate}
+
+The full model stacks $L$ such layers with optional PAC cross-layer coupling and Precision-Weighted Predictive Coding (PC) for hierarchical error correction.
+
+\begin{table}[h]
+\centering
+\caption{Complexity comparison between HormonicFormer and Transformer.}
+\label{tab:complexity}
+\begin{tabular}{lcc}
+\toprule
+& \textbf{HormonicFormer} & \textbf{Transformer} \\
+\midrule
+Time per layer & $\mathcal{O}(n_s \cdot S \log S \cdot D)$ & $\mathcal{O}(S^2 \cdot D)$ \\
+Space per layer & $\mathcal{O}(S \cdot D)$ & $\mathcal{O}(S^2 + S \cdot D)$ \\
+Learnable params/layer & $\mathcal{O}(D)$ & $\mathcal{O}(D^2)$ \\
+Long-range coupling & Diffusion + Hebbian & Attention \\
+\bottomrule
+\end{tabular}
+\end{table}

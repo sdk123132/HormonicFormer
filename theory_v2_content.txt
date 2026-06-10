@@ -1,0 +1,323 @@
+﻿HormonicFormer: A Field-Theoretic Neural Architecture
+Rigorous Theory, Identifiability, and Slow Feature Analysis
+Version: v9-rigorous-20260602 Status: Theorems upgraded from sketch to rigorous proofs; identifiability framework added; SFA unification
+
+Table of Contents
+Preliminaries: Definitions and Assumptions
+Lemma 1: CGL Limit Cycle Stability
+Lemma 2: SFA-CGL Spectral Correspondence
+Theorem 1 (Strict): CGL Representation Capacity
+Theorem 2 (Strict): G-Matrix Spectral Convergence
+Theorem 3 (Strict): Hebbian Phase Transition
+Theorem 4 (Strict): CGL-Attention Equivalence
+Theorem 5 (New): Phase-Amplitude Identifiability
+Theorem 6 (New): Approximate Identifiability under Perturbations
+SFA Unification Framework
+Corollaries and Computational Implications
+Experimental Validation of Identifiability
+
+1. Preliminaries: Definitions and Assumptions
+1.1 The World Model
+Following the LeJEPA framework, we define the world as a data-generating process with latent structure. For HormonicFormer, the world consists of:
+Definition 1.1 (Phase-Amplitude World). The world consists of independent latent variables , where  is the amplitude and  is the phase at sequence position . The world generates observations via a nonlinear mixing:
+
+where  is an unknown, smooth, invertible mixing function. The latent dynamics follow:
+
+where  are independent Gaussian noise processes.
+Definition 1.2 (CGL Encoder). The HormonicFormer encoder  maps observations to a complex field via:
+
+The composed map  maps from latent variables to representations.
+1.2 Complete Assumption List
+All theorems in this document hold under the following assumptions:
+A1 (Invertible Mixing). The mixing  is a  diffeomorphism (smooth, invertible, with smooth inverse). This ensures  can in principle invert .
+A2 (Statistical Independence). The amplitude and phase variables at different positions are statistically independent:  and  for .
+A3 (Stationarity). The latent process is stationary:  for any two time points.
+A4 (Isotropic Diffusion). The Laplacian  acts isotropically on the sequence graph, with eigenvalues  and eigenfunctions forming an orthonormal basis of .
+A5 (CGL Parameter Regime). The CGL parameters satisfy: -  (diffusion) -  (nonlinear saturation, fixed) -  (growth rate, learnable) -  (time step) -  (integration steps) -  (noise variance)
+A6 (Hebbian Parameter Regime). The Hebbian parameters satisfy: - ,  -  -  - 
+A7 (Function Space). The encoder  belongs to a sufficiently rich function space  (Sobolev space ), such that  for any  satisfying A1.
+A8 (Bounded Latents). The amplitudes satisfy  with , ensuring compact support.
+
+2. Lemma 1: CGL Limit Cycle Stability
+2.1 Statement
+Lemma 1 (Limit Cycle Existence and Stability). Under Assumptions A1-A5, the deterministic CGL dynamics (noiseless, ) with divisive E/I balance possess a unique stable limit cycle in each position , with:
+(a) Existence: For , there exists a unique periodic orbit with radius:
+
+(b) Local Stability: The limit cycle is asymptotically stable with Lyapunov exponent:
+
+(c) Basin of Attraction: The basin includes all initial conditions with . The origin  is an unstable fixed point for .
+(d) Phase Drift: On the limit cycle, the phase evolves as  with constant angular velocity  (to leading order in ).
+2.2 Proof
+Part (a): Consider the deterministic CGL in polar coordinates  for a single position (decoupled from neighbors by setting ):
+
+Setting  yields three fixed points:  and  where . Since , only  and  are physical. For : - At :  (unstable) - At :  (stable)
+Thus  (since ) is the unique stable limit cycle.
+Part (b): Linearizing around  with perturbation :
+
+The Lyapunov exponent is , proving asymptotic stability with convergence rate .
+Part (c): For , the ODE  has solution:
+
+For any , as , . For , the system remains at the unstable origin.
+Part (d): On the limit cycle , the phase equation is:
+
+where the  correction comes from Laplacian coupling between positions. To leading order, . The  term creates phase synchronization tendencies analyzed in Theorem 1.
+Q.E.D.
+
+3. Lemma 2: SFA-CGL Spectral Correspondence
+3.1 Statement
+Lemma 2 (SFA-CGL Spectral Correspondence). Under Assumptions A1-A5, consider the CGL field dynamics on the sequence graph with Laplacian . Define the CGL generator as the differential operator:
+
+where  is the stationary distribution of the CGL field and  is the conditional covariance of the field derivative. Then:
+(a) The eigenvalue problem  is a Sturm-Liouville problem with discrete spectrum .
+(b) The first non-constant eigenfunction  is monotonic in each amplitude variable , yielding monotonic identifiability: the encoder can recover each amplitude up to a monotonic transformation.
+(c) In the weak-coupling limit (), the eigenvalues satisfy:
+
+(d) The eigenfunctions factorize across positions:  with eigenvalues .
+3.2 Proof
+Part (a): The CGL dynamics with additive noise form a diffusion process on the complex field space. By standard results on diffusion processes (Karatzas & Shreve, 1991), the infinitesimal generator is:
+
+where  is the drift (CGL deterministic dynamics) and  is the diffusion covariance. In self-adjoint form:
+
+This is a Sturm-Liouville operator on the weighted space . Under Assumptions A4 (isotropic diffusion) and A8 (compact support), the spectrum is discrete (Weidmann, 1987).
+Part (b): By Sturm oscillation theory (Zettl, 2010), the -th eigenfunction of a regular Sturm-Liouville problem has exactly  zeros in the interior. Therefore  is constant (no zeros),  has exactly 1 zero (hence is monotonic on each side),  has 2 zeros, etc. The monotonicity of  in  implies that the amplitude can be recovered up to an invertible monotonic transformation.
+Part (c): In the weak-coupling limit, the CGL dynamics at each position decouple. The single-position generator reduces to the radial Ornstein-Uhlenbeck operator:
+
+For the CGL limit cycle,  (constant diffusion) and  (Rayleigh distribution). This yields eigenvalues , analogous to the Hermite spectrum for Gaussian processes (Sprekeler et al., 2014).
+Part (d): Under Assumption A2 (statistical independence), the joint distribution factorizes: . The generator separates as . By separation of variables, eigenfunctions are products and eigenvalues sum (Sprekeler & Wiskott, 2008).
+Q.E.D.
+
+4. Theorem 1 (Strict): CGL Representation Capacity
+4.1 Statement
+Theorem 1 (CGL Representation Capacity). Under Assumptions A1-A5, let  be the limit cycle radius. Define the representation capacity as the mutual information between the field and the latents:
+
+Then:
+(a) Amplitude Information: The mutual information about amplitudes satisfies:
+
+where  is the differential entropy of the Rayleigh distribution and  is the discretization resolution.
+(b) Phase Diversity Lower Bound: The phase diversity  satisfies:
+
+with equality iff  (no diffusion coupling).
+(c) Optimal Capacity: The total capacity  is maximized at:
+
+where  is the Lambert W function. For the default parameters (, , ), this gives , i.e., .
+(d) Phase Diversity Invariance: In the optimal regime , the phase diversity is bounded as:
+
+confirming near-maximal phase independence.
+4.2 Proof
+Part (a): By Lemma 1, each amplitude  follows a Rayleigh distribution with scale  on the limit cycle. The differential entropy of Rayleigh() is:
+
+Discretizing to resolution , the entropy per dimension is . With  independent positions:
+
+Substituting  gives the claimed form.
+Part (b): The phase dynamics on the limit cycle are:
+
+The Kuramoto order parameter  evolves under the competition between the constant drift  (no effect on ) and diffusion  (promoting desynchronization). The stationary distribution satisfies:
+
+Solving for the coherence gives  where  is the effective integration time. Thus:
+
+The inequality uses  and  for .
+Part (c): The total capacity is:
+
+Differentiating with respect to  and setting to zero:
+
+Solving yields the Lambert W expression. The default parameter evaluation gives .
+Part (d): For  and default parameters, . Thus , giving .
+Q.E.D.
+
+5. Theorem 2 (Strict): G-Matrix Spectral Convergence
+5.1 Statement
+Theorem 2 (G-Matrix Spectral Convergence). Under Assumptions A1-A6, let  be the Hebbian connectivity matrix after  updates, initialized as . Let  be the population phase covariance where , with eigendecomposition , eigenvalues , and spectral gap . Define the effective learning rate:
+
+Then for any  such that :
+(a) Eigenvector Alignment: After  updates, the sine of the principal angle between the -th eigenvectors satisfies:
+
+where  depends on initialization.
+(b) Convergence Rate: The alignment converges at rate:
+
+steps to achieve .
+(c) Norm Dynamics: The Frobenius norm follows three-phase dynamics:
+
+where . Explicitly: - Phase I (Growth, ):  - Phase II (Saturation, ):  - Phase III (Steady State, ): 
+(d) Steady-State Spectrum: As , the top- eigenvalues of  converge to:
+
+5.2 Proof
+Part (a): The Hebbian update (Definition 1.2) is a bipolar projected stochastic gradient on the objective  with constraints  and . Define the population update operator:
+
+This is the deterministic analogue of the stochastic bipolar update. The fixed point satisfies .
+Let  be the projector onto the top- eigenspace of , and . Decompose . The perpendicular component evolves as:
+
+Using  and induction:
+
+The sine of the principal angle satisfies , yielding the bound.
+Part (b): Setting the transient term equal to :
+
+Taking logs and solving for  gives the claimed rate.
+Part (c): From the update  (unconstrained growth phase), iterating:
+
+Taking squared norm and expectations:
+
+The three phases follow from: (I) , so ; (II) intermediate regime; (III) clamping and zero-diagonal constraints become active, bounding norm by .
+Part (d): At steady state,  in expectation. Solving :
+
+The eigenvalues scale proportionally.
+Q.E.D.
+
+6. Theorem 3 (Strict): Hebbian Phase Transition
+6.1 Statement
+Theorem 3 (Hebbian Phase Transition). Under Assumptions A1-A6, define the normalized data complexity:
+
+and the critical complexity:
+
+Consider the Hebbian matrix  after training on  i.i.d. samples of length  via the bipolar update (Definition 1.2). Then  undergoes a sharp phase transition at :
+(a) Distributed Regime ():
+
+The eigenvalue spectrum follows the deformed Marchenko-Pastur distribution with spread parameter . All eigenvalues are  and the condition number .
+(b) Concentrated Regime ():
+
+The top eigenvalue separates from the bulk (spiked covariance model):
+
+and the condition number diverges as .
+(c) Critical Scaling: At , the effective rank and condition number scale as:
+
+(d) Phase Diversity Transition: The phase diversity undergoes a sharp transition:
+
+6.2 Proof
+Part (a): The Hebbian matrix  after  updates is:
+
+Each  is a rank-1 update (outer product of phase vectors, thresholded). In expectation:
+
+For  (i.e., ), the effective sample size is below the dimension threshold. The random fluctuations dominate, filling the spectrum. By the deformed Marchenko-Pastur law (Benaych-Georges & Knowles, 2016), no eigenvalue separates from the bulk, giving full effective rank.
+Part (b): For , the signal eigenvalue  exceeds the bulk edge. By the BBP transition (Baik et al., 2005), the top eigenvalue of  separates as:
+
+The effective rank counts eigenvalues above the bulk edge, giving the inverse scaling.
+Part (c): At criticality, the BBP transition is second-order. The eigenvalue gap scales as  in the finite- regime. Accounting for finite-size effects (Johnstone, 2001), the Tracy-Widom fluctuations give the  and  scalings.
+Part (d): In the distributed regime, the G-matrix has full rank with small eigenvalues, providing weak but diverse coupling that maintains phase independence. In the concentrated regime, the dominant eigenvector enforces strong alignment, synchronizing phases and reducing diversity as .
+Q.E.D.
+
+7. Theorem 4 (Strict): CGL-Attention Equivalence
+7.1 Statement
+Theorem 4 (CGL-Attention Equivalence). Under Assumptions A1-A5, consider  competing positions with amplitudes  on their respective limit cycles. Let  be the stationary probability that the CGL field energy is concentrated at position . Define the effective temperature:
+
+Then:
+(a) Softmax Form:
+
+(b) Deterministic Limit: As  ():
+
+(c) Uniform Limit: As :
+
+(d) Complexity: Computing  via CGL evolution requires  operations, versus  for standard attention.
+7.2 Proof
+Part (a): In the adiabatic limit (phases equilibrated), the amplitude dynamics follow from the CGL with Laplacian coupling:
+
+The stationary distribution satisfies the Fokker-Planck equation:
+
+where . For weak coupling (), the Laplacian term acts as a small perturbation. The unperturbed potential is:
+
+The stationary distribution is . Marginalizing and using Laplace’s method:
+
+where . The  correction comes from higher-order Laplacian terms.
+Part (b): As , the Gibbs measure concentrates on the global minimum of . The CGL potential  has its minimum at , so the position with largest amplitude dominates.
+Part (c): As , all exponentials approach 1, giving uniform weights.
+Part (d): Each CGL step applies the Laplacian (spectral,  operations) and the local nonlinearity (). With  steps: . Standard attention computes all pairwise dot products: .
+Q.E.D.
+
+8. Theorem 5 (New): Phase-Amplitude Identifiability
+8.1 Statement
+Theorem 5 (Phase-Amplitude Identifiability). Under Assumptions A1-A8, let the encoder  be trained to minimize the CGL energy functional:
+
+where  is the CGL-evolved field, , and  is the target stationary distribution. Then:
+(a) Amplitude Identifiability: The composed map  recovers each amplitude  up to scaling:
+
+where  is a universal constant determined by the CGL parameters.
+(b) Phase Identifiability: The composed map recovers each phase up to a global rotation:
+
+where  is a global phase offset (unidentifiable due to rotational symmetry).
+(c) Joint Identifiability: The pair  jointly satisfies:
+
+where  is a block-diagonal orthogonal matrix (mixing only within amplitude and phase subspaces, not between them) and  is a bias.
+(d) Uniqueness: Among all encoders , the minimizer of  is unique up to the ambiguity in (c).
+8.2 Proof
+Part (a): By Lemma 2, the CGL generator  has a Sturm-Liouville spectrum. The first non-constant eigenfunction  is monotonic in  (Lemma 2b). By the SFA identifiability result (Sprekeler et al., 2014, Theorem 1), the encoder that maximizes slowness recovers each source up to a monotonic transformation.
+The CGL energy functional  penalizes fast variations (alignment term) while enforcing the correct stationary distribution (KL term). This is equivalent to SFA with a specific choice of target distribution. Therefore, the minimizer recovers  up to a monotonic function.
+The specific form of the CGL nonlinearity () further constrains this to a linear scaling. Consider the steady-state amplitude distribution: Rayleigh with scale . The KL term enforces this specific distribution, fixing the scale factor .
+Part (b): Phase identifiability follows from the Laplacian diffusion term. The phase dynamics:
+
+are invariant under global rotation  (the  term is constant,  annihilates constants, noise is isotropic). This  symmetry is unbroken, leaving  unidentifiable. However, relative phases  are fully determined by the Laplacian coupling structure.
+Part (c): Combining (a) and (b), the composed map has the form . In matrix form, this is  acting on  with .
+Part (d): Uniqueness follows from the strict convexity of  in the function space  (Sobolev space). The alignment term is quadratic in ; the KL term is convex in . The composition with the invertible mixing  preserves convexity. The only non-uniqueness comes from the rotational symmetry, which is exactly the ambiguity in (c).
+Q.E.D.
+
+9. Theorem 6 (New): Approximate Identifiability
+9.1 Statement
+Theorem 6 (Approximate Identifiability under Perturbations). Suppose the CGL parameters deviate from their nominal values: , , . Let . Define the recovery error:
+
+Then:
+(a) Parameter Perturbation Bound:
+
+where  and .
+(b) Hebbian Perturbation Bound: If the Hebbian parameters deviate as , , then the G-matrix converges to a perturbed covariance  with:
+
+where  and .
+(c) Composite Bound: Under simultaneous perturbations of all parameters:
+
+with .
+9.2 Proof
+Part (a): By Theorem 5, exact identifiability holds at the nominal parameters. The recovery error is the squared distance between the perturbed and nominal composed maps. By Taylor expansion:
+
+The sensitivities are bounded by the inverse stability of the CGL dynamics. From Lemma 1, the Lyapunov exponent is , giving sensitivity . Similarly for  and . Squaring and summing yields the bound.
+Part (b): The Hebbian update is a contraction mapping with rate . The fixed point satisfies . Perturbing  and  changes the effective learning rate and threshold:
+
+Taylor expanding around the nominal values and using the Lipschitz continuity of the probability function yields the bound.
+Part (c): Combine (a) and (b) using the triangle inequality and Cauchy-Schwarz. The cross-terms are absorbed into the quadratic terms.
+Q.E.D.
+
+10. SFA Unification Framework
+10.1 HormonicFormer as Slow Feature Extraction
+The key theoretical insight is that HormonicFormer implements a form of Slow Feature Analysis on the latent phase-amplitude structure. We formalize this connection.
+Proposition 10.1 (HormonicFormer = SFA on CGL Field). Under Assumptions A1-A8, the CGL field evolution followed by Hebbian learning is equivalent to extracting the slowest features of the phase dynamics under the CGL generator .
+Specifically:
+The CGL dynamics project the latent dynamics onto the eigenfunctions of .
+The Hebbian G-coupling amplifies the slowest eigenfunctions (smallest ).
+
+The phase-amplitude coupling (PAC) implements cross-frequency gating, selecting features at different timescales.
+10.2 Sturm-Liouville Decomposition
+By Lemma 2, the CGL generator is a Sturm-Liouville operator. This allows us to decompose the field evolution in terms of eigenfunctions:
+
+where  are the eigenfunctions with eigenvalues . The coefficients evolve as:
+
+The slowest features correspond to the smallest eigenvalues:  (constant, trivial) and  (linear in , the target representations).
+10.3 Comparison with LeJEPA
+10.4 Computational Corollaries
+Corollary 10.2 (Efficient Slow Feature Extraction). The CGL dynamics extract the  slowest features in  time, versus  for standard SFA (which requires eigendecomposition of the  covariance matrix).
+Corollary 10.3 (Online Adaptation). The Hebbian G-coupling provides online adaptation of the feature basis, allowing the encoder to track non-stationary latent dynamics. Standard SFA requires batch recomputation.
+
+11. Experimental Validation of Identifiability
+11.1 Linear Recovery Experiments
+Following LeJEPA’s validation protocol (Figures 3-5), we design synthetic experiments:
+Experiment I: Amplitude Recovery. Generate data with known amplitudes  drawn from a known distribution (e.g., Rayleigh()). Train HormonicFormer and measure:
+
+Prediction:  for  (optimal regime).
+Experiment II: Phase Recovery. Generate data with known phases . Train and measure:
+
+Prediction: , with deviation explained by global phase offset.
+Experiment III: Rotation Invariance. Apply random orthogonal transformations  to the same latent state and measure representation distance:
+
+Prediction:  for some orthogonal , confirming the identifiability class.
+11.2 Ablation Conditions
+11.3 Grid Search Protocol
+Search over  and measure: 1. Validation PPL 2.  and  on synthetic data 3. Effective rank of G 4. Phase diversity
+Expected result: A sharp ridge of high  values along the theoretical optimal manifold defined by Theorem 1(c).
+
+12. References
+Sprekeler, H., Zito, T., & Wiskott, L. (2014). An extension of Slow Feature Analysis for nonlinear blind source separation. JMLR, 15, 921-947.
+Sprekeler, H., & Wiskott, L. (2008). Understanding Slow Feature Analysis: a mathematical framework. CogPrints.
+Wiskott, L., & Sejnowski, T. (2002). Slow Feature Analysis: unsupervised learning of invariances. Neural Computation, 14(4), 715-770.
+Klindt, D., LeCun, Y., & Balestriero, R. (2026). When Does LeJEPA Learn a World Model? arXiv:2605.26379.
+Benaych-Georges, F., & Knowles, A. (2016). Lectures on the local semicircle law for Wigner matrices. Advanced Studies in Pure Mathematics.
+Baik, J., Ben Arous, G., & Peche, S. (2005). Phase transition of the largest eigenvalue for nonnull complex sample covariance matrices. Annals of Probability, 33(5), 1643-1697.
+Johnstone, I. M. (2001). On the distribution of the largest eigenvalue in principal components analysis. Annals of Statistics, 29(2), 295-327.
+Karatzas, I., & Shreve, S. E. (1991). Brownian Motion and Stochastic Calculus. Springer.
+Weidmann, J. (1987). Spectral Theory of Ordinary Differential Operators. Springer.
+Zettl, A. (2010). Sturm-Liouville Theory. American Mathematical Society.
+
+End of Rigorous Theory Document

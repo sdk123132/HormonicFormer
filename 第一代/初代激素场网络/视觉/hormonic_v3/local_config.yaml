@@ -1,0 +1,132 @@
+# HormonicFormer v3 - 本地RTX 5070 8GB配置
+# 适配单卡小显存环境
+
+name: "hormonic_v3_local_5070"
+
+model:
+  # 模型架构 (精简版，适配8GB显存)
+  d_model: 128          # 512 -> 128 (1/4参数量)
+  n_heads: 4            # 16 -> 4
+  n_layers: 2           # 8 -> 2 (加速测试)
+  seq_len: 196          # 14x14 patches for 28x28 images
+  patch_size: 2
+  n_steps: 3            # CGL演化步数 (10→3加速)
+  n_classes: 10         # Fashion-MNIST
+
+  # CGL参数 (v3.1 数值稳定性修复)
+  D0_amp: 0.002
+  D0_phase: 0.002
+  dt: 0.02
+  noise_scale: 0.005
+
+  # 局部 E/I 平衡
+  ei_balance:
+    enabled: true
+    tau_e: 2.0
+    tau_i: 1.0
+    gamma_e: 1.0
+    gamma_i: 0.8
+    w_inh: 0.3
+    inh_radius: 3
+
+  # 感觉反馈
+  sensory_feedback:
+    enabled: true
+    feedback_strength: 0.3
+    feedback_freq: 1
+
+  # Hebbian 实时可塑性
+  hebbian:
+    enabled: true
+    eta_hebb: 0.001
+    eta_anti: 0.0005
+    sync_threshold: 0.3
+    tau_hebb: 10.0
+    decay: 0.999
+
+  # 跨频耦合 (关闭)
+  cross_freq_coupling:
+    enabled: false
+    alpha_cfc: 0.1
+    coupling_mode: "deep_to_shallow"
+
+  # 能量约束 (关闭)
+  energy_constraint:
+    enabled: false
+    atp_budget: 1.0
+    atp_recovery: 0.1
+
+train:
+  # 训练参数 (适配小显存)
+  epochs: 50
+  batch_size: 64        # 256 -> 64 (8GB只能撑64)
+  accumulation_steps: 2 # 梯度累积=等效batch_size 128
+
+  # 优化器
+  lr: 0.0005             # 稍大lr加速收敛
+  weight_decay: 0.001
+  scheduler: cosine
+  warmup_epochs: 2      # 加warmup稳定训练
+
+  # 数据
+  dataset: fashion_mnist
+  data_root: ./data
+  noise_sigma: 0.3
+  num_workers: 0        # Windows必须设为0
+  pin_memory: false     # 小batch不需要
+
+  # 系统
+  seed: 42
+  use_amp: false        # AMP导致NaN，RTX 5070上关闭
+  amp_exclude_ops: false # NVIDIA不需要DCU兼容
+  nan_guard: true
+  detect_anomaly: false
+
+  # 检查点
+  checkpoint_dir: ./checkpoints
+  log_dir: ./logs
+  save_interval: 5
+  log_interval: 50
+  max_stale_epochs: 10  # 放宽早停
+
+neuromod:
+  # DA (多巴胺) - v3.1修复
+  da_init: 2.5
+  da_min: 0.1
+  da_max: 0.9
+  da_ema_alpha: 0.9
+  da_var_alpha: 0.9
+
+  # CB (大麻素)
+  use_cb: false
+  cb_gain: 2.0
+  cb_threshold: 0.25
+  tau_cb: 10.0
+
+  # G (胶质/BWO)
+  init_density: 0.3
+  target_sparsity: 0.50
+  sparsity_min: 0.65
+  sparsity_max: 0.75
+
+bwo:
+  # 脑波优化
+  use_bwo: true
+  pop_size: 10          # 20 -> 10 (减少内存)
+  eval_samples: 1000    # 2000 -> 1000
+  evolve_interval: 5   # 5 -> 10 (减少频率)
+  flip_ratio: 0.30
+
+pc:
+  # 预测编码
+  use_pc: true
+  pred_hidden_mult: 2   # 4 -> 2 (节省显存)
+  aux_weight: 0.01
+
+# 显存预估 (8GB):
+#   Model: ~2.5M params = 10MB
+#   Batch 64: 64 * 196 * 128 * 4bytes * n_layers = ~200MB per layer
+#   Activations: ~2GB
+#   Gradients: ~500MB
+#   Optimizer states: ~1GB
+#   Total: ~4-5GB < 8GB ✓

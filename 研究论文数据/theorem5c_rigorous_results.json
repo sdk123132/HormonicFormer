@@ -1,0 +1,619 @@
+{
+  "n_pairs": 100,
+  "seq_len": 64,
+  "seed": 42,
+  "pairs": [
+    {
+      "pair_id": 0,
+      "d_original": 22.2659969329834,
+      "d_transformed": 22.2659969329834,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 1,
+      "d_original": 19.277301788330078,
+      "d_transformed": 19.277301788330078,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 2,
+      "d_original": 20.504070281982422,
+      "d_transformed": 20.50406837463379,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 3,
+      "d_original": 20.038543701171875,
+      "d_transformed": 20.038543701171875,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 4,
+      "d_original": 21.199596405029297,
+      "d_transformed": 21.199594497680664,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 5,
+      "d_original": 22.087356567382812,
+      "d_transformed": 22.08735466003418,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 6,
+      "d_original": 22.50130271911621,
+      "d_transformed": 22.50130271911621,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 7,
+      "d_original": 21.693918228149414,
+      "d_transformed": 21.693918228149414,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 8,
+      "d_original": 19.167680740356445,
+      "d_transformed": 19.167680740356445,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 9,
+      "d_original": 20.541601181030273,
+      "d_transformed": 20.541601181030273,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 10,
+      "d_original": 23.85230255126953,
+      "d_transformed": 23.85230255126953,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 11,
+      "d_original": 21.444496154785156,
+      "d_transformed": 21.444496154785156,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 12,
+      "d_original": 22.039932250976562,
+      "d_transformed": 22.039932250976562,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 13,
+      "d_original": 18.394716262817383,
+      "d_transformed": 18.394716262817383,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 14,
+      "d_original": 19.171295166015625,
+      "d_transformed": 19.171293258666992,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 15,
+      "d_original": 19.987018585205078,
+      "d_transformed": 19.98702049255371,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 16,
+      "d_original": 21.793367385864258,
+      "d_transformed": 21.793367385864258,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 17,
+      "d_original": 21.021337509155273,
+      "d_transformed": 21.021337509155273,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 18,
+      "d_original": 20.36249351501465,
+      "d_transformed": 20.36249351501465,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 19,
+      "d_original": 22.775367736816406,
+      "d_transformed": 22.775367736816406,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 20,
+      "d_original": 21.58045196533203,
+      "d_transformed": 21.580453872680664,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 21,
+      "d_original": 21.16887855529785,
+      "d_transformed": 21.16887855529785,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 22,
+      "d_original": 24.60735321044922,
+      "d_transformed": 24.60735321044922,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 23,
+      "d_original": 19.535192489624023,
+      "d_transformed": 19.535192489624023,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 24,
+      "d_original": 21.359601974487305,
+      "d_transformed": 21.359601974487305,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 25,
+      "d_original": 20.9273681640625,
+      "d_transformed": 20.9273681640625,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 26,
+      "d_original": 22.140336990356445,
+      "d_transformed": 22.140335083007812,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 27,
+      "d_original": 20.57645606994629,
+      "d_transformed": 20.57645606994629,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 28,
+      "d_original": 20.80281639099121,
+      "d_transformed": 20.80281639099121,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 29,
+      "d_original": 24.187274932861328,
+      "d_transformed": 24.187274932861328,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 30,
+      "d_original": 21.285568237304688,
+      "d_transformed": 21.285568237304688,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 31,
+      "d_original": 22.660797119140625,
+      "d_transformed": 22.660799026489258,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 32,
+      "d_original": 21.68749237060547,
+      "d_transformed": 21.68749237060547,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 33,
+      "d_original": 20.585739135742188,
+      "d_transformed": 20.585739135742188,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 34,
+      "d_original": 23.149362564086914,
+      "d_transformed": 23.149362564086914,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 35,
+      "d_original": 22.808151245117188,
+      "d_transformed": 22.808151245117188,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 36,
+      "d_original": 23.484642028808594,
+      "d_transformed": 23.48464012145996,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 37,
+      "d_original": 22.601659774780273,
+      "d_transformed": 22.601659774780273,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 38,
+      "d_original": 20.930274963378906,
+      "d_transformed": 20.930274963378906,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 39,
+      "d_original": 22.053375244140625,
+      "d_transformed": 22.053377151489258,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 40,
+      "d_original": 21.538026809692383,
+      "d_transformed": 21.538026809692383,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 41,
+      "d_original": 20.42180061340332,
+      "d_transformed": 20.421798706054688,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 42,
+      "d_original": 21.299259185791016,
+      "d_transformed": 21.29926109313965,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 43,
+      "d_original": 22.459569931030273,
+      "d_transformed": 22.459571838378906,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 44,
+      "d_original": 21.60530662536621,
+      "d_transformed": 21.605304718017578,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 45,
+      "d_original": 21.385244369506836,
+      "d_transformed": 21.385244369506836,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 46,
+      "d_original": 20.465009689331055,
+      "d_transformed": 20.465009689331055,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 47,
+      "d_original": 22.570682525634766,
+      "d_transformed": 22.570682525634766,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 48,
+      "d_original": 20.111515045166016,
+      "d_transformed": 20.111515045166016,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 49,
+      "d_original": 23.214420318603516,
+      "d_transformed": 23.214420318603516,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 50,
+      "d_original": 19.67818832397461,
+      "d_transformed": 19.67818832397461,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 51,
+      "d_original": 21.969730377197266,
+      "d_transformed": 21.969730377197266,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 52,
+      "d_original": 21.564836502075195,
+      "d_transformed": 21.564836502075195,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 53,
+      "d_original": 22.253257751464844,
+      "d_transformed": 22.25325584411621,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 54,
+      "d_original": 22.422679901123047,
+      "d_transformed": 22.422679901123047,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 55,
+      "d_original": 23.84494972229004,
+      "d_transformed": 23.84494972229004,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 56,
+      "d_original": 22.491352081298828,
+      "d_transformed": 22.49135398864746,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 57,
+      "d_original": 23.221031188964844,
+      "d_transformed": 23.221031188964844,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 58,
+      "d_original": 22.11087989807129,
+      "d_transformed": 22.11087989807129,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 59,
+      "d_original": 23.768016815185547,
+      "d_transformed": 23.768016815185547,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 60,
+      "d_original": 24.236112594604492,
+      "d_transformed": 24.23611068725586,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 61,
+      "d_original": 21.849788665771484,
+      "d_transformed": 21.849790573120117,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 62,
+      "d_original": 21.204633712768555,
+      "d_transformed": 21.204633712768555,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 63,
+      "d_original": 21.23004722595215,
+      "d_transformed": 21.23004722595215,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 64,
+      "d_original": 22.58350372314453,
+      "d_transformed": 22.5835018157959,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 65,
+      "d_original": 22.00677490234375,
+      "d_transformed": 22.006772994995117,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 66,
+      "d_original": 22.434329986572266,
+      "d_transformed": 22.434329986572266,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 67,
+      "d_original": 19.497440338134766,
+      "d_transformed": 19.4974422454834,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 68,
+      "d_original": 23.79349708557129,
+      "d_transformed": 23.79349708557129,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 69,
+      "d_original": 21.55795669555664,
+      "d_transformed": 21.557958602905273,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 70,
+      "d_original": 22.807235717773438,
+      "d_transformed": 22.807235717773438,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 71,
+      "d_original": 22.484657287597656,
+      "d_transformed": 22.484655380249023,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 72,
+      "d_original": 23.605566024780273,
+      "d_transformed": 23.60556411743164,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 73,
+      "d_original": 20.152217864990234,
+      "d_transformed": 20.152217864990234,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 74,
+      "d_original": 24.997360229492188,
+      "d_transformed": 24.997360229492188,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 75,
+      "d_original": 21.11606788635254,
+      "d_transformed": 21.11606788635254,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 76,
+      "d_original": 20.1608943939209,
+      "d_transformed": 20.1608943939209,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 77,
+      "d_original": 22.29585838317871,
+      "d_transformed": 22.295856475830078,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 78,
+      "d_original": 21.902324676513672,
+      "d_transformed": 21.902324676513672,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 79,
+      "d_original": 19.0726318359375,
+      "d_transformed": 19.0726318359375,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 80,
+      "d_original": 22.601167678833008,
+      "d_transformed": 22.601167678833008,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 81,
+      "d_original": 22.75802230834961,
+      "d_transformed": 22.75802230834961,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 82,
+      "d_original": 22.42904281616211,
+      "d_transformed": 22.429046630859375,
+      "difference": 3.814697265625e-06
+    },
+    {
+      "pair_id": 83,
+      "d_original": 19.46047019958496,
+      "d_transformed": 19.460468292236328,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 84,
+      "d_original": 20.993364334106445,
+      "d_transformed": 20.993366241455078,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 85,
+      "d_original": 21.53118324279785,
+      "d_transformed": 21.53118324279785,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 86,
+      "d_original": 22.791757583618164,
+      "d_transformed": 22.791757583618164,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 87,
+      "d_original": 22.413665771484375,
+      "d_transformed": 22.413665771484375,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 88,
+      "d_original": 21.03746223449707,
+      "d_transformed": 21.03746223449707,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 89,
+      "d_original": 22.790117263793945,
+      "d_transformed": 22.790117263793945,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 90,
+      "d_original": 21.237464904785156,
+      "d_transformed": 21.237464904785156,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 91,
+      "d_original": 22.292619705200195,
+      "d_transformed": 22.292621612548828,
+      "difference": 1.9073486328125e-06
+    },
+    {
+      "pair_id": 92,
+      "d_original": 23.016098022460938,
+      "d_transformed": 23.016098022460938,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 93,
+      "d_original": 22.531463623046875,
+      "d_transformed": 22.531463623046875,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 94,
+      "d_original": 20.861812591552734,
+      "d_transformed": 20.861812591552734,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 95,
+      "d_original": 20.366344451904297,
+      "d_transformed": 20.366344451904297,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 96,
+      "d_original": 21.939678192138672,
+      "d_transformed": 21.939678192138672,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 97,
+      "d_original": 21.494762420654297,
+      "d_transformed": 21.494762420654297,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 98,
+      "d_original": 21.52600860595703,
+      "d_transformed": 21.52600860595703,
+      "difference": 0.0
+    },
+    {
+      "pair_id": 99,
+      "d_original": 21.727359771728516,
+      "d_transformed": 21.727359771728516,
+      "difference": 0.0
+    }
+  ],
+  "statistics": {
+    "input_mean": 21.714372634887695,
+    "input_std": 1.3057093620300293,
+    "output_mean": 21.714370727539062,
+    "output_std": 1.3057093620300293,
+    "mean_difference": 5.722046125811175e-07,
+    "max_difference": 3.814697265625e-06,
+    "n_exact": 71,
+    "correlation": 1.0,
+    "p_value": 0.0,
+    "status": "WARNING"
+  }
+}

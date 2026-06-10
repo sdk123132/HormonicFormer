@@ -1,0 +1,2340 @@
+# HormonicFormer v3 - Copy Task & Char LM 实验代码汇总
+======================================================================
+
+
+======================================================================
+# File: train_working.py
+# Size: 3664 bytes
+======================================================================
+
+"""
+Simple Copy Task S=128 - Working version
+"""
+import sys
+sys.path.insert(0, 'models')
+sys.path.insert(0, 'field')
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from hormonicformer_v3 import HormonicFormer
+
+class CopyDataset(Dataset):
+    def __init__(self, vocab_size, seq_len, num_samples):
+        self.data = torch.randint(0, vocab_size, (num_samples, seq_len))
+    def __len__(self):
+        return len(self.data)
+    def __getitem__(self, idx):
+        s = self.data[idx]
+        return s, s.clone()
+
+class Wrapper(nn.Module):
+    def __init__(self, config, vocab_size, seq_len):
+        super().__init__()
+        self.vocab_size = vocab_size
+        config['model']['seq_len'] = seq_len
+        config['model']['patch_size'] = 1
+        self.model = HormonicFormer(config)
+        self.model.classifier = nn.Linear(config['model']['d_model'], vocab_size)
+    
+    def forward(self, seq):
+        B, S = seq.shape
+        vals = (seq.float() / (self.vocab_size - 1)) * 2 - 1
+        img = vals.view(B, 1, 1, S)
+        x = self.model.patch_embed(img)
+        x = x.flatten(2).transpose(1, 2)
+        for block in self.model.blocks:
+            x = block(x)
+        return self.model.classifier(x)
+
+config = {
+    'model': {
+        'd_model': 64, 'n_heads': 4, 'n_layers': 2, 'seq_len': 128, 'n_steps': 2,
+        'n_classes': 10, 'patch_size': 1, 'D0_amp': 0.002, 'D0_phase': 0.002,
+        'dt': 0.02, 'noise_scale': 0.0, 'dropout': 0.1,
+        'ei_balance': {'enabled': False}, 'sensory_feedback': {'enabled': False},
+        'hebbian': {'enabled': False}, 'cross_freq_coupling': {'enabled': False},
+        'energy_constraint': {'enabled': False}
+    },
+    'neuromod': {'da_init': 0.5, 'da_min': 0.1, 'da_max': 0.9, 'use_cb': False},
+    'bwo': {'use_bwo': False}, 'pc': {'use_pc': False}
+}
+
+print('=== Copy Task S=128 ===')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'Device: {device}')
+
+vocab_size, seq_len = 10, 128
+model = Wrapper(config, vocab_size, seq_len).to(device)
+print(f'Model: {sum(p.numel() for p in model.parameters())/1e6:.3f}M params')
+
+train_ds = CopyDataset(vocab_size, seq_len, 1000)
+val_ds = CopyDataset(vocab_size, seq_len, 200)
+train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=0)
+val_loader = DataLoader(val_ds, batch_size=32, shuffle=False, num_workers=0)
+print(f'Train: {len(train_ds)}, Val: {len(val_ds)}')
+
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+print('\nTraining 10 epochs...')
+for epoch in range(10):
+    # Train
+    model.train()
+    total_loss, correct, total = 0, 0, 0
+    for i, (x, y) in enumerate(train_loader):
+        x, y = x.to(device), y.to(device)
+        optimizer.zero_grad()
+        logits = model(x)
+        loss = F.cross_entropy(logits.reshape(-1, vocab_size), y.reshape(-1))
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == y).sum().item()
+        total += y.numel()
+    
+    train_acc = correct / total
+    
+    # Val
+    model.eval()
+    val_correct, val_total = 0, 0
+    with torch.no_grad():
+        for x, y in val_loader:
+            x, y = x.to(device), y.to(device)
+            logits = model(x)
+            pred = logits.argmax(dim=-1)
+            val_correct += (pred == y).sum().item()
+            val_total += y.numel()
+    val_acc = val_correct / val_total
+    
+    print(f'Epoch {epoch+1}: Train={train_acc*100:.1f}%, Val={val_acc*100:.1f}%')
+
+print('\nDone!')
+
+
+
+
+======================================================================
+# File: train_charlm_debug.py
+# Size: 8069 bytes
+======================================================================
+
+"""
+Char LM with error handling and memory monitoring
+"""
+import sys
+sys.path.insert(0, 'models')
+sys.path.insert(0, 'field')
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from hormonicformer_v3 import HormonicFormer
+
+class CharDataset(Dataset):
+    def __init__(self, text, seq_len):
+        chars = sorted(list(set(text)))
+        self.vocab_size = len(chars)
+        self.stoi = {ch: i for i, ch in enumerate(chars)}
+        self.itos = {i: ch for i, ch in enumerate(chars)}
+        data = torch.tensor([self.stoi[ch] for ch in text], dtype=torch.long)
+        self.data = data
+        self.seq_len = seq_len
+    
+    def __len__(self):
+        return len(self.data) - self.seq_len - 1
+    
+    def __getitem__(self, idx):
+        x = self.data[idx: idx + self.seq_len]
+        y = self.data[idx + 1: idx + self.seq_len + 1]
+        return x, y
+
+class CharLMWrapper(nn.Module):
+    def __init__(self, config, vocab_size, seq_len):
+        super().__init__()
+        self.seq_len = seq_len
+        self.vocab_size = vocab_size
+        
+        config['model']['seq_len'] = seq_len
+        config['model']['patch_size'] = 1
+        
+        self.model = HormonicFormer(config)
+        d_model = config['model']['d_model']
+        self.model.classifier = nn.Linear(d_model, vocab_size)
+    
+    def forward(self, seq):
+        B, S = seq.shape
+        vals = (seq.float() / (self.vocab_size - 1)) * 2 - 1
+        img = vals.view(B, 1, 1, S)
+        
+        x = self.model.patch_embed(img)
+        x = x.flatten(2).transpose(1, 2)
+        
+        for block in self.model.blocks:
+            x = block(x)
+        
+        return self.model.classifier(x)
+
+# 使用 Hamlet 文本
+text = """To be, or not to be, that is the question:
+Whether 'tis nobler in the mind to suffer
+The slings and arrows of outrageous fortune,
+Or to take arms against a sea of troubles
+And by opposing end them. To die: to sleep;
+No more; and by a sleep to say we end
+The heart-ache and the thousand natural shocks
+That flesh is heir to, 'tis a consummation
+Devoutly to be wish'd. To die, to sleep;
+To sleep: perchance to dream: ay, there's the rub;
+For in that sleep of death what dreams may come
+When we have shuffled off this mortal coil,
+Must give us pause: there's the respect
+That makes calamity of so long life;""" * 20
+
+print('=== Char LM with Monitoring (S=64) ===')
+print(f'Text length: {len(text)}')
+
+seq_len = 64
+ds = CharDataset(text, seq_len)
+print(f'Dataset: {len(ds)} samples, vocab={ds.vocab_size}')
+
+# 数据加载器
+train_size = int(0.9 * len(ds))
+val_size = len(ds) - train_size
+train_ds, val_ds = torch.utils.data.random_split(ds, [train_size, val_size])
+
+train_loader = DataLoader(train_ds, batch_size=16, shuffle=True)  # BS=16 更安全
+val_loader = DataLoader(val_ds, batch_size=16, shuffle=False)
+
+# 配置（禁用 BWO 和 Hebbian 避免数值问题）
+config = {
+    'model': {
+        'd_model': 64, 'n_heads': 4, 'n_layers': 2, 'seq_len': seq_len, 'n_steps': 2,
+        'n_classes': ds.vocab_size, 'patch_size': 1, 'D0_amp': 0.002, 'D0_phase': 0.002,
+        'dt': 0.02, 'noise_scale': 0.0, 'dropout': 0.1,
+        'ei_balance': {'enabled': False}, 'sensory_feedback': {'enabled': False},
+        'hebbian': {'enabled': False},  # 禁用 Hebbian
+        'cross_freq_coupling': {'enabled': False},
+        'energy_constraint': {'enabled': False}
+    },
+    'neuromod': {'da_init': 0.5, 'da_min': 0.1, 'da_max': 0.9, 'use_cb': False},
+    'bwo': {'use_bwo': False},  # 禁用 BWO
+    'pc': {'use_pc': False}
+}
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'Device: {device}')
+
+if device.type == 'cuda':
+    print(f'GPU: {torch.cuda.get_device_name(0)}')
+    print(f'Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f}GB')
+
+model = CharLMWrapper(config, ds.vocab_size, seq_len).to(device)
+print(f'Model: {sum(p.numel() for p in model.parameters())/1e6:.3f}M params')
+
+optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)  # 降低学习率
+
+print('\nTraining 10 epochs with monitoring...')
+print('='*60)
+
+for epoch in range(10):
+    # Train
+    model.train()
+    total_loss, correct, total = 0, 0, 0
+    
+    for batch_idx, (x, y) in enumerate(train_loader):
+        # 确保数据有效
+        if x is None or y is None:
+            print(f'[WARN] Epoch {epoch+1}, Batch {batch_idx}: None data')
+            continue
+        if x.size(0) == 0 or y.size(0) == 0:
+            print(f'[WARN] Epoch {epoch+1}, Batch {batch_idx}: Empty batch')
+            continue
+        
+        try:
+            x, y = x.to(device), y.to(device)
+            optimizer.zero_grad()
+            
+            logits = model(x)
+            
+            # Next token prediction
+            shift_logits = logits[:, :-1, :].contiguous()
+            shift_targets = y[:, 1:].contiguous()
+            
+            loss = F.cross_entropy(
+                shift_logits.view(-1, ds.vocab_size),
+                shift_targets.view(-1)
+            )
+            
+            # NaN 检查
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f'[WARN] Epoch {epoch+1}, Batch {batch_idx}: NaN/Inf loss, skipping')
+                continue
+            
+            loss.backward()
+            
+            # 梯度检查
+            total_norm = 0
+            for p in model.parameters():
+                if p.grad is not None:
+                    total_norm += p.grad.data.norm(2).item() ** 2
+            total_norm = total_norm ** 0.5
+            
+            if total_norm > 10:
+                print(f'[WARN] Epoch {epoch+1}, Batch {batch_idx}: Large grad norm {total_norm:.2f}')
+            
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            
+            total_loss += loss.item()
+            pred = shift_logits.argmax(dim=-1)
+            correct += (pred == shift_targets).sum().item()
+            total += shift_targets.numel()
+            
+            # 显存监控
+            if batch_idx % 50 == 0 and device.type == 'cuda':
+                allocated = torch.cuda.memory_allocated() / 1024**2
+                reserved = torch.cuda.memory_reserved() / 1024**2
+                print(f'  Batch {batch_idx}: Loss={loss.item():.3f}, GPU={allocated:.0f}MB/{reserved:.0f}MB')
+                
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                print(f'[ERROR] OOM at Epoch {epoch+1}, Batch {batch_idx}')
+                if device.type == 'cuda':
+                    torch.cuda.empty_cache()
+                continue
+            else:
+                raise e
+                
+        except Exception as e:
+            print(f'[ERROR] Epoch {epoch+1}, Batch {batch_idx}: {e}')
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    train_acc = correct / total if total > 0 else 0
+    
+    # Val
+    model.eval()
+    val_correct, val_total = 0, 0
+    with torch.no_grad():
+        for x, y in val_loader:
+            try:
+                x, y = x.to(device), y.to(device)
+                logits = model(x)
+                shift_logits = logits[:, :-1, :]
+                shift_targets = y[:, 1:]
+                pred = shift_logits.argmax(dim=-1)
+                val_correct += (pred == shift_targets).sum().item()
+                val_total += shift_targets.numel()
+            except Exception as e:
+                print(f'[ERROR] Val batch: {e}')
+                continue
+    
+    val_acc = val_correct / val_total if val_total > 0 else 0
+    avg_loss = total_loss / len(train_loader) if len(train_loader) > 0 else float('inf')
+    ppl = torch.exp(torch.tensor(avg_loss)).item() if avg_loss < 10 else float('inf')
+    
+    print(f'Epoch {epoch+1}: Loss={avg_loss:.3f}, PPL={ppl:.1f}, Train Acc={train_acc*100:.1f}%, Val Acc={val_acc*100:.1f}%')
+    print('-'*60)
+    
+    # 显存清理
+    if device.type == 'cuda':
+        torch.cuda.empty_cache()
+
+print('\n' + '='*60)
+print('Training completed!')
+
+
+
+
+======================================================================
+# File: train_s128.py
+# Size: 4330 bytes
+======================================================================
+
+"""
+Copy Task S=128 test
+"""
+import sys
+sys.path.insert(0, 'models')
+sys.path.insert(0, 'field')
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+
+from hormonicformer_v3 import HormonicFormer
+
+
+class CopyDataset(Dataset):
+    def __init__(self, vocab_size, seq_len, num_samples):
+        self.data = torch.randint(0, vocab_size, (num_samples, seq_len))
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        s = self.data[idx]
+        return s, s.clone()
+
+
+class Wrapper(nn.Module):
+    def __init__(self, config, vocab_size, seq_len):
+        super().__init__()
+        self.seq_len = seq_len
+        self.vocab_size = vocab_size
+        
+        config['model']['seq_len'] = seq_len
+        config['model']['patch_size'] = 1
+        
+        self.model = HormonicFormer(config)
+        d_model = config['model']['d_model']
+        self.model.classifier = nn.Linear(d_model, vocab_size)
+    
+    def forward(self, seq):
+        B, S = seq.shape
+        vals = (seq.float() / (self.vocab_size - 1)) * 2 - 1
+        img = vals.view(B, 1, 1, S)
+        
+        x = self.model.patch_embed(img)
+        x = x.flatten(2).transpose(1, 2)
+        
+        x_embed = x.detach().clone()
+        for block in self.model.blocks:
+            x = block(x, x_embed=x_embed if block.use_feedback else None)
+        
+        return self.model.classifier(x)
+
+
+# Config
+config = {
+    'model': {
+        'd_model': 128,
+        'n_heads': 4,
+        'n_layers': 2,
+        'seq_len': 128,
+        'n_steps': 3,
+        'n_classes': 10,
+        'patch_size': 1,
+        'D0_amp': 0.002,
+        'D0_phase': 0.002,
+        'dt': 0.02,
+        'noise_scale': 0.01,
+        'dropout': 0.1,
+        'ei_balance': {'enabled': True, 'tau_e': 2.0, 'tau_i': 1.0, 'gamma_e': 1.0, 'gamma_i': 0.8, 'w_inh': 0.3, 'inh_radius': 3},
+        'sensory_feedback': {'enabled': True, 'feedback_strength': 0.3, 'feedback_freq': 1},
+        'hebbian': {'enabled': True, 'eta_hebb': 0.001, 'eta_anti': 0.0005, 'sync_threshold': 0.5, 'tau_hebb': 10.0, 'decay': 0.999},
+        'cross_freq_coupling': {'enabled': False},
+        'energy_constraint': {'enabled': False}
+    },
+    'neuromod': {'da_init': 0.5, 'da_min': 0.1, 'da_max': 0.9, 'use_cb': False},
+    'bwo': {'use_bwo': True, 'evolve_interval': 5, 'flip_ratio': 0.3},
+    'pc': {'use_pc': True, 'pred_hidden_mult': 4, 'aux_weight': 0.01}
+}
+
+import sys
+sys.stdout.reconfigure(line_buffering=True)
+print('=== Copy Task S=128 ===', flush=True)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'Device: {device}', flush=True)
+
+vocab_size, seq_len = 10, 128
+model = Wrapper(config, vocab_size, seq_len).to(device)
+print(f'Model: {sum(p.numel() for p in model.parameters())/1e6:.2f}M params', flush=True)
+
+train_ds = CopyDataset(vocab_size, seq_len, 5000)
+val_ds = CopyDataset(vocab_size, seq_len, 500)
+train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=0)
+val_loader = DataLoader(val_ds, batch_size=32, shuffle=False, num_workers=0)
+print(f'Train: {len(train_ds)}, Val: {len(val_ds)}', flush=True)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+
+print('\nTraining...', flush=True)
+for epoch in range(10):
+    # Train
+    model.train()
+    total_loss = 0
+    correct = 0
+    total = 0
+    
+    for x, y in train_loader:
+        x, y = x.to(device), y.to(device)
+        optimizer.zero_grad()
+        logits = model(x)
+        loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
+        loss.backward()
+        optimizer.step()
+        
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == y).sum().item()
+        total += y.numel()
+    
+    train_acc = correct / total
+    
+    # Val
+    model.eval()
+    val_correct = 0
+    val_total = 0
+    with torch.no_grad():
+        for x, y in val_loader:
+            x, y = x.to(device), y.to(device)
+            logits = model(x)
+            pred = logits.argmax(dim=-1)
+            val_correct += (pred == y).sum().item()
+            val_total += y.numel()
+    
+    val_acc = val_correct / val_total
+    print(f'Epoch {epoch+1}: Train Acc={train_acc*100:.1f}%, Val Acc={val_acc*100:.1f}%', flush=True)
+
+print('\nDone!', flush=True)
+
+
+
+
+======================================================================
+# File: train_s256.py
+# Size: 3654 bytes
+======================================================================
+
+"""
+Copy Task S=256 - Long range test
+"""
+import sys
+sys.path.insert(0, 'models')
+sys.path.insert(0, 'field')
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from hormonicformer_v3 import HormonicFormer
+
+class CopyDataset(Dataset):
+    def __init__(self, vocab_size, seq_len, num_samples):
+        self.data = torch.randint(0, vocab_size, (num_samples, seq_len))
+    def __len__(self):
+        return len(self.data)
+    def __getitem__(self, idx):
+        s = self.data[idx]
+        return s, s.clone()
+
+class Wrapper(nn.Module):
+    def __init__(self, config, vocab_size, seq_len):
+        super().__init__()
+        self.vocab_size = vocab_size
+        config['model']['seq_len'] = seq_len
+        config['model']['patch_size'] = 1
+        self.model = HormonicFormer(config)
+        self.model.classifier = nn.Linear(config['model']['d_model'], vocab_size)
+    
+    def forward(self, seq):
+        B, S = seq.shape
+        vals = (seq.float() / (self.vocab_size - 1)) * 2 - 1
+        img = vals.view(B, 1, 1, S)
+        x = self.model.patch_embed(img)
+        x = x.flatten(2).transpose(1, 2)
+        for block in self.model.blocks:
+            x = block(x)
+        return self.model.classifier(x)
+
+config = {
+    'model': {
+        'd_model': 64, 'n_heads': 4, 'n_layers': 2, 'seq_len': 256, 'n_steps': 2,
+        'n_classes': 10, 'patch_size': 1, 'D0_amp': 0.002, 'D0_phase': 0.002,
+        'dt': 0.02, 'noise_scale': 0.0, 'dropout': 0.1,
+        'ei_balance': {'enabled': False}, 'sensory_feedback': {'enabled': False},
+        'hebbian': {'enabled': False}, 'cross_freq_coupling': {'enabled': False},
+        'energy_constraint': {'enabled': False}
+    },
+    'neuromod': {'da_init': 0.5, 'da_min': 0.1, 'da_max': 0.9, 'use_cb': False},
+    'bwo': {'use_bwo': False}, 'pc': {'use_pc': False}
+}
+
+print('=== Copy Task S=256 ===')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'Device: {device}')
+
+vocab_size, seq_len = 10, 256
+model = Wrapper(config, vocab_size, seq_len).to(device)
+print(f'Model: {sum(p.numel() for p in model.parameters())/1e6:.3f}M params')
+
+train_ds = CopyDataset(vocab_size, seq_len, 1000)
+val_ds = CopyDataset(vocab_size, seq_len, 200)
+train_loader = DataLoader(train_ds, batch_size=16, shuffle=True, num_workers=0)  # BS=16 for S=256
+val_loader = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=0)
+print(f'Train: {len(train_ds)}, Val: {len(val_ds)}')
+
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+print('\nTraining 15 epochs...')
+for epoch in range(15):
+    model.train()
+    total_loss, correct, total = 0, 0, 0
+    for i, (x, y) in enumerate(train_loader):
+        x, y = x.to(device), y.to(device)
+        optimizer.zero_grad()
+        logits = model(x)
+        loss = F.cross_entropy(logits.reshape(-1, vocab_size), y.reshape(-1))
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == y).sum().item()
+        total += y.numel()
+    
+    train_acc = correct / total
+    
+    model.eval()
+    val_correct, val_total = 0, 0
+    with torch.no_grad():
+        for x, y in val_loader:
+            x, y = x.to(device), y.to(device)
+            logits = model(x)
+            pred = logits.argmax(dim=-1)
+            val_correct += (pred == y).sum().item()
+            val_total += y.numel()
+    val_acc = val_correct / val_total
+    
+    print(f'Epoch {epoch+1}: Train={train_acc*100:.1f}%, Val={val_acc*100:.1f}%')
+
+print('\nDone!')
+
+
+
+
+======================================================================
+# File: train_minimal.py
+# Size: 3633 bytes
+======================================================================
+
+"""
+Minimal Copy Task test
+"""
+import sys
+sys.path.insert(0, 'models')
+sys.path.insert(0, 'field')
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+
+from hormonicformer_v3 import HormonicFormer
+
+
+class CopyDataset(Dataset):
+    def __init__(self, vocab_size, seq_len, num_samples):
+        self.data = torch.randint(0, vocab_size, (num_samples, seq_len))
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        s = self.data[idx]
+        return s, s.clone()
+
+
+class Wrapper(nn.Module):
+    def __init__(self, config, vocab_size, seq_len):
+        super().__init__()
+        self.seq_len = seq_len
+        self.vocab_size = vocab_size
+        
+        config['model']['seq_len'] = seq_len
+        config['model']['patch_size'] = 1
+        
+        self.model = HormonicFormer(config)
+        d_model = config['model']['d_model']
+        self.model.classifier = nn.Linear(d_model, vocab_size)
+    
+    def forward(self, seq):
+        B, S = seq.shape
+        vals = (seq.float() / (self.vocab_size - 1)) * 2 - 1
+        img = vals.view(B, 1, 1, S)
+        
+        x = self.model.patch_embed(img)
+        x = x.flatten(2).transpose(1, 2)
+        
+        x_embed = x.detach().clone()
+        for block in self.model.blocks:
+            x = block(x, x_embed=x_embed if block.use_feedback else None)
+        
+        return self.model.classifier(x)
+
+
+# Config
+config = {
+    'model': {
+        'd_model': 64,
+        'n_heads': 4,
+        'n_layers': 2,
+        'seq_len': 16,
+        'n_steps': 3,
+        'n_classes': 10,
+        'patch_size': 1,
+        'D0_amp': 0.002,
+        'D0_phase': 0.002,
+        'dt': 0.02,
+        'noise_scale': 0.01,
+        'dropout': 0.1,
+        'ei_balance': {'enabled': True, 'tau_e': 2.0, 'tau_i': 1.0, 'gamma_e': 1.0, 'gamma_i': 0.8, 'w_inh': 0.3, 'inh_radius': 3},
+        'sensory_feedback': {'enabled': True, 'feedback_strength': 0.3, 'feedback_freq': 1},
+        'hebbian': {'enabled': True, 'eta_hebb': 0.001, 'eta_anti': 0.0005, 'sync_threshold': 0.5, 'tau_hebb': 10.0, 'decay': 0.999},
+        'cross_freq_coupling': {'enabled': False},
+        'energy_constraint': {'enabled': False}
+    },
+    'neuromod': {'da_init': 0.5, 'da_min': 0.1, 'da_max': 0.9, 'use_cb': False},
+    'bwo': {'use_bwo': True, 'evolve_interval': 5, 'flip_ratio': 0.3},
+    'pc': {'use_pc': True, 'pred_hidden_mult': 4, 'aux_weight': 0.01}
+}
+
+print('Setup...')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'Device: {device}')
+
+vocab_size, seq_len = 10, 16
+model = Wrapper(config, vocab_size, seq_len).to(device)
+print(f'Model: {sum(p.numel() for p in model.parameters())/1e6:.2f}M params')
+
+train_ds = CopyDataset(vocab_size, seq_len, 1000)
+train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
+print(f'Dataset: {len(train_ds)} samples')
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+
+print('\nTraining...')
+for epoch in range(3):
+    total_loss = 0
+    correct = 0
+    total = 0
+    
+    for x, y in train_loader:
+        x, y = x.to(device), y.to(device)
+        
+        optimizer.zero_grad()
+        logits = model(x)
+        
+        loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
+        loss.backward()
+        optimizer.step()
+        
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == y).sum().item()
+        total += y.numel()
+    
+    acc = correct / total
+    print(f'Epoch {epoch+1}: Loss={total_loss/len(train_loader):.4f}, Acc={acc*100:.1f}%')
+
+print('\nDone!')
+
+
+
+
+======================================================================
+# File: test_copy_simple.py
+# Size: 2488 bytes
+======================================================================
+
+"""
+Quick test for Copy Task
+"""
+import sys
+from pathlib import Path
+
+import torch
+import torch.nn as nn
+
+# Add paths
+sys.path.insert(0, 'models')
+sys.path.insert(0, 'field')
+
+from hormonicformer_v3 import HormonicFormer
+
+config = {
+    'model': {
+        'd_model': 64,
+        'n_heads': 4,
+        'n_layers': 2,
+        'seq_len': 16,
+        'n_steps': 3,
+        'n_classes': 10,
+        'patch_size': 1,
+        'D0_amp': 0.002,
+        'D0_phase': 0.002,
+        'dt': 0.02,
+        'noise_scale': 0.01,
+        'dropout': 0.1,
+        'ei_balance': {
+            'enabled': True,
+            'tau_e': 2.0,
+            'tau_i': 1.0,
+            'gamma_e': 1.0,
+            'gamma_i': 0.8,
+            'w_inh': 0.3,
+            'inh_radius': 3
+        },
+        'sensory_feedback': {
+            'enabled': True,
+            'feedback_strength': 0.3,
+            'feedback_freq': 1
+        },
+        'hebbian': {
+            'enabled': True,
+            'eta_hebb': 0.001,
+            'eta_anti': 0.0005,
+            'sync_threshold': 0.5,
+            'tau_hebb': 10.0,
+            'decay': 0.999
+        },
+        'cross_freq_coupling': {'enabled': False},
+        'energy_constraint': {'enabled': False}
+    },
+    'neuromod': {
+        'da_init': 0.5,
+        'da_min': 0.1,
+        'da_max': 0.9,
+        'use_cb': False
+    },
+    'bwo': {
+        'use_bwo': True,
+        'evolve_interval': 5,
+        'flip_ratio': 0.3
+    },
+    'pc': {
+        'use_pc': True,
+        'pred_hidden_mult': 4,
+        'aux_weight': 0.01
+    }
+}
+
+print('Creating model...')
+model = HormonicFormer(config)
+print(f'Model created: {sum(p.numel() for p in model.parameters())/1e6:.2f}M params')
+
+# Test forward
+print('\nTesting forward...')
+B, S = 2, 16
+seq = torch.randint(0, 10, (B, S))
+vals = (seq.float() / 9) * 2 - 1
+img = vals.view(B, 1, 1, S)
+print(f'Input shape: {img.shape}')
+
+try:
+    x = model.patch_embed(img)
+    print(f'After patch_embed: {x.shape}')
+    x = x.flatten(2).transpose(1, 2)
+    print(f'After flatten: {x.shape}')
+    
+    x_embed = x.detach().clone()
+    for block in model.blocks:
+        x = block(x, x_embed=x_embed if block.use_feedback else None)
+    print(f'After blocks: {x.shape}')
+    
+    # Replace classifier
+    model.classifier = nn.Linear(64, 10)
+    logits = model.classifier(x)
+    print(f'Logits shape: {logits.shape}')
+    
+    print('\nTest passed!')
+except Exception as e:
+    print(f'Error: {e}')
+    import traceback
+    traceback.print_exc()
+
+
+
+
+======================================================================
+# File: test_dataloader.py
+# Size: 2702 bytes
+======================================================================
+
+"""
+Test DataLoader with batch
+"""
+import sys
+sys.path.insert(0, 'models')
+sys.path.insert(0, 'field')
+
+import torch
+from torch.utils.data import Dataset, DataLoader
+from hormonicformer_v3 import HormonicFormer
+import torch.nn as nn
+
+class CopyDataset(Dataset):
+    def __init__(self, vocab_size, seq_len, num_samples):
+        self.data = torch.randint(0, vocab_size, (num_samples, seq_len))
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        s = self.data[idx]
+        return s, s.clone()
+
+print('Creating dataset...')
+ds = CopyDataset(10, 128, 100)
+print(f'Dataset: {len(ds)}')
+
+print('Creating DataLoader...')
+loader = DataLoader(ds, batch_size=32, shuffle=True, num_workers=0)
+print(f'Loader: {len(loader)} batches')
+
+print('Getting one batch...')
+x, y = next(iter(loader))
+print(f'Batch: x={x.shape}, y={y.shape}')
+
+print('Creating model...')
+config = {
+    'model': {
+        'd_model': 64, 'n_heads': 4, 'n_layers': 2, 'seq_len': 128, 'n_steps': 2,
+        'n_classes': 10, 'patch_size': 1, 'D0_amp': 0.002, 'D0_phase': 0.002,
+        'dt': 0.02, 'noise_scale': 0.0, 'dropout': 0.1,
+        'ei_balance': {'enabled': False}, 'sensory_feedback': {'enabled': False},
+        'hebbian': {'enabled': False}, 'cross_freq_coupling': {'enabled': False},
+        'energy_constraint': {'enabled': False}
+    },
+    'neuromod': {'da_init': 0.5, 'da_min': 0.1, 'da_max': 0.9, 'use_cb': False},
+    'bwo': {'use_bwo': False}, 'pc': {'use_pc': False}
+}
+
+class Wrapper(nn.Module):
+    def __init__(self, config, vocab_size, seq_len):
+        super().__init__()
+        self.vocab_size = vocab_size
+        config['model']['seq_len'] = seq_len
+        config['model']['patch_size'] = 1
+        self.model = HormonicFormer(config)
+        self.model.classifier = nn.Linear(config['model']['d_model'], vocab_size)
+    
+    def forward(self, seq):
+        B, S = seq.shape
+        vals = (seq.float() / (self.vocab_size - 1)) * 2 - 1
+        img = vals.view(B, 1, 1, S)
+        x = self.model.patch_embed(img)
+        x = x.flatten(2).transpose(1, 2)
+        for block in self.model.blocks:
+            x = block(x)
+        return self.model.classifier(x)
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'Device: {device}')
+
+model = Wrapper(config, 10, 128).to(device)
+print(f'Model created!')
+
+print('Testing forward...')
+x = x.to(device)
+logits = model(x)
+print(f'Logits: {logits.shape}')
+
+print('Testing backward...')
+import torch.nn.functional as F
+y = y.to(device)
+loss = F.cross_entropy(logits.view(-1, 10), y.view(-1))
+print(f'Loss: {loss.item():.4f}')
+loss.backward()
+print('Backward done!')
+
+print('\nAll tests passed!')
+
+
+
+
+======================================================================
+# File: test_all_steps.py
+# Size: 3145 bytes
+======================================================================
+
+import sys
+sys.path.insert(0, 'models')
+sys.path.insert(0, 'field')
+
+import torch
+print('Step 1: Import modules...')
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from hormonicformer_v3 import HormonicFormer
+print('Step 2: Modules imported')
+
+class CopyDataset(Dataset):
+    def __init__(self, vocab_size, seq_len, num_samples):
+        self.data = torch.randint(0, vocab_size, (num_samples, seq_len))
+    def __len__(self):
+        return len(self.data)
+    def __getitem__(self, idx):
+        s = self.data[idx]
+        return s, s.clone()
+print('Step 3: Dataset class defined')
+
+class Wrapper(nn.Module):
+    def __init__(self, config, vocab_size, seq_len):
+        super().__init__()
+        self.vocab_size = vocab_size
+        config['model']['seq_len'] = seq_len
+        config['model']['patch_size'] = 1
+        self.model = HormonicFormer(config)
+        self.model.classifier = nn.Linear(config['model']['d_model'], vocab_size)
+    
+    def forward(self, seq):
+        B, S = seq.shape
+        vals = (seq.float() / (self.vocab_size - 1)) * 2 - 1
+        img = vals.view(B, 1, 1, S)
+        x = self.model.patch_embed(img)
+        x = x.flatten(2).transpose(1, 2)
+        for block in self.model.blocks:
+            x = block(x)
+        return self.model.classifier(x)
+print('Step 4: Wrapper class defined')
+
+config = {
+    'model': {
+        'd_model': 64, 'n_heads': 4, 'n_layers': 2, 'seq_len': 128, 'n_steps': 2,
+        'n_classes': 10, 'patch_size': 1, 'D0_amp': 0.002, 'D0_phase': 0.002,
+        'dt': 0.02, 'noise_scale': 0.0, 'dropout': 0.1,
+        'ei_balance': {'enabled': False}, 'sensory_feedback': {'enabled': False},
+        'hebbian': {'enabled': False}, 'cross_freq_coupling': {'enabled': False},
+        'energy_constraint': {'enabled': False}
+    },
+    'neuromod': {'da_init': 0.5, 'da_min': 0.1, 'da_max': 0.9, 'use_cb': False},
+    'bwo': {'use_bwo': False}, 'pc': {'use_pc': False}
+}
+
+print('Step 5: Creating dataset...')
+train_ds = CopyDataset(10, 128, 100)
+print(f'Step 6: Dataset created: {len(train_ds)}')
+
+print('Step 7: Creating DataLoader...')
+train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=0)
+print(f'Step 8: DataLoader created: {len(train_loader)} batches')
+
+print('Step 9: Creating model...')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = Wrapper(config, 10, 128).to(device)
+print(f'Step 10: Model created on {device}')
+
+print('Step 11: Getting one batch...')
+x, y = next(iter(train_loader))
+print(f'Step 12: Batch: x={x.shape}, y={y.shape}')
+
+print('Step 13: Forward pass...')
+x = x.to(device)
+logits = model(x)
+print(f'Step 14: Logits: {logits.shape}')
+
+print('Step 15: Loss...')
+y = y.to(device)
+loss = F.cross_entropy(logits.view(-1, 10), y.view(-1))
+print(f'Step 16: Loss: {loss.item():.4f}')
+
+print('Step 17: Backward...')
+loss.backward()
+print('Step 18: Backward done!')
+
+print('Step 19: Optimizer...')
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+optimizer.step()
+print('Step 20: Optimizer step done!')
+
+print('\nAll steps passed! Training loop should work.')
+
+
+
+
+======================================================================
+# File: experiments\ablation.py
+# Size: 13422 bytes
+======================================================================
+
+#!/usr/bin/env python3
+"""
+消融实验 (Ablation Study)
+=========================
+改善六：证明每个组件的因果贡献
+
+配置：
+  1. 完整模型 (Full)                    - 基线
+  2. 关闭扩散项 (No Diffusion)          - 证明扩散是信息混合的核心
+  3. 关闭反应项 (No Reaction)           - 证明非线性反应不是可有可无
+  4. 关闭 E/I 平衡 (No EI)              - 证明侧抑制的作用
+  5. 关闭感觉反馈 (No Feedback)         - 证明外部驱动的锚定作用
+  6. 关闭 Hebbian 可塑性 (No Hebbian)   - 证明实时突触学习的作用
+  7. 纯嵌入基线 (Embedding Only)        - 证明场演化在真正起作用
+
+数据集：Fashion-MNIST (默认) 或 CIFAR-10
+
+用法：
+  python experiments/ablation.py --configs all --dataset fashion_mnist --epochs 10
+  python experiments/ablation.py --configs no_diffusion no_reaction --epochs 5
+"""
+import sys
+import argparse
+import json
+from pathlib import Path
+from datetime import datetime
+from copy import deepcopy
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / 'models'))
+sys.path.insert(0, str(PROJECT_ROOT / 'field'))
+
+from hormonicformer_v3 import HormonicFormer
+
+
+# =============================================================================
+# 消融配置生成器
+# =============================================================================
+def make_ablation_configs(base_config):
+    """为每个消融条件生成配置"""
+    configs = {}
+
+    # 1. 完整模型
+    configs['full'] = deepcopy(base_config)
+
+    # 2. 关闭扩散项 (No Diffusion)
+    cfg = deepcopy(base_config)
+    cfg['model']['D0_amp'] = 0.0
+    cfg['model']['D0_phase'] = 0.0
+    configs['no_diffusion'] = cfg
+
+    # 3. 关闭反应项 (No Reaction)
+    cfg = deepcopy(base_config)
+    cfg['model']['dt'] = 0.0  # 冻结反应
+    configs['no_reaction'] = cfg
+
+    # 4. 关闭 E/I 平衡
+    cfg = deepcopy(base_config)
+    if 'ei_balance' in cfg['model']:
+        cfg['model']['ei_balance']['enabled'] = False
+    configs['no_ei'] = cfg
+
+    # 5. 关闭感觉反馈
+    cfg = deepcopy(base_config)
+    if 'sensory_feedback' in cfg['model']:
+        cfg['model']['sensory_feedback']['enabled'] = False
+    configs['no_feedback'] = cfg
+
+    # 6. 关闭 Hebbian 可塑性
+    cfg = deepcopy(base_config)
+    if 'hebbian' in cfg['model']:
+        cfg['model']['hebbian']['enabled'] = False
+    configs['no_hebbian'] = cfg
+
+    # 7. 纯嵌入基线 (Embedding Only)
+    cfg = deepcopy(base_config)
+    cfg['model']['n_steps'] = 0  # 不演化
+    cfg['model']['n_layers'] = 1  # 单层
+    if 'ei_balance' in cfg['model']:
+        cfg['model']['ei_balance']['enabled'] = False
+    if 'sensory_feedback' in cfg['model']:
+        cfg['model']['sensory_feedback']['enabled'] = False
+    if 'hebbian' in cfg['model']:
+        cfg['model']['hebbian']['enabled'] = False
+    configs['embedding_only'] = cfg
+
+    return configs
+
+
+# =============================================================================
+# 数据加载
+# =============================================================================
+def get_dataloader(dataset_name, batch_size, num_workers, data_root='./data', train=True):
+    """获取数据集"""
+    if train:
+        transform = transforms.Compose([
+            transforms.RandomRotation(10),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5) if dataset_name == 'cifar10' else (0.5,),
+                                 (0.5, 0.5, 0.5) if dataset_name == 'cifar10' else (0.5,))
+        ])
+    else:
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5) if dataset_name == 'cifar10' else (0.5,),
+                                 (0.5, 0.5, 0.5) if dataset_name == 'cifar10' else (0.5,))
+        ])
+
+    if dataset_name == 'fashion_mnist':
+        dataset = datasets.FashionMNIST(data_root, train=train, download=True, transform=transform)
+        in_channels = 1
+        img_size = 28
+    elif dataset_name == 'mnist':
+        dataset = datasets.MNIST(data_root, train=train, download=True, transform=transform)
+        in_channels = 1
+        img_size = 28
+    elif dataset_name == 'cifar10':
+        dataset = datasets.CIFAR10(data_root, train=train, download=True, transform=transform)
+        in_channels = 3
+        img_size = 32
+    else:
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=train,
+                       num_workers=num_workers, pin_memory=True)
+
+    return loader, in_channels, img_size
+
+
+# =============================================================================
+# 训练与评估
+# =============================================================================
+def train_epoch(model, loader, optimizer, device):
+    model.train()
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    for images, targets in loader:
+        images, targets = images.to(device, non_blocking=True), targets.to(device, non_blocking=True)
+
+        optimizer.zero_grad()
+        logits, loss = model(images, targets)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == targets).sum().item()
+        total += targets.size(0)
+
+    return total_loss / len(loader), correct / total
+
+
+@torch.no_grad()
+def evaluate(model, loader, device):
+    model.eval()
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    for images, targets in loader:
+        images, targets = images.to(device, non_blocking=True), targets.to(device, non_blocking=True)
+        logits, loss = model(images, targets)
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == targets).sum().item()
+        total += targets.size(0)
+
+    return total_loss / len(loader), correct / total
+
+
+# =============================================================================
+# 主实验
+# =============================================================================
+def run_ablation(args):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Device: {device}")
+
+    # 基础配置
+    if args.dataset == 'cifar10':
+        seq_len = (32 // args.patch_size) ** 2
+        n_classes = 10
+        in_channels = 3
+    else:
+        seq_len = (28 // args.patch_size) ** 2
+        n_classes = 10
+        in_channels = 1
+
+    base_config = {
+        'model': {
+            'd_model': args.d_model,
+            'n_heads': args.n_heads,
+            'n_layers': args.n_layers,
+            'seq_len': seq_len,
+            'n_steps': args.n_steps,
+            'patch_size': args.patch_size,
+            'n_classes': n_classes,
+            'D0_amp': 0.1,
+            'D0_phase': 0.1,
+            'dt': 0.05,
+            'ei_balance': {
+                'enabled': True,
+                'tau_e': 2.0,
+                'tau_i': 1.0,
+                'gamma_e': 1.0,
+                'gamma_i': 0.8,
+                'w_inh': 0.3,
+                'inh_radius': 3,
+            },
+            'sensory_feedback': {
+                'enabled': True,
+                'feedback_strength': 0.3,
+                'feedback_freq': 1,
+            },
+            'hebbian': {
+                'enabled': True,
+                'eta_hebb': 0.001,
+                'eta_anti': 0.0005,
+                'sync_threshold': 0.3,
+                'tau_hebb': 10,
+                'decay': 0.999,
+            },
+        },
+        'pc': {
+            'use_pc': True,
+            'pred_hidden_mult': 4,
+            'aux_weight': 0.01,
+        }
+    }
+
+    # 生成消融配置
+    all_configs = make_ablation_configs(base_config)
+
+    # 选择要运行的配置
+    if args.configs == ['all']:
+        selected_configs = list(all_configs.keys())
+    else:
+        selected_configs = [c for c in args.configs if c in all_configs]
+
+    print(f"\nRunning ablation configs: {selected_configs}")
+    print(f"Dataset: {args.dataset}, Epochs: {args.epochs}")
+
+    # 数据
+    train_loader, _, _ = get_dataloader(args.dataset, args.batch_size, args.num_workers, args.data_root, train=True)
+    val_loader, _, _ = get_dataloader(args.dataset, args.batch_size, args.num_workers, args.data_root, train=False)
+
+    results = {}
+
+    for config_name in selected_configs:
+        print(f"\n{'='*60}")
+        print(f"Config: {config_name}")
+        print(f"{'='*60}")
+
+        config = all_configs[config_name]
+
+        # 创建模型
+        model = HormonicFormer(config).to(device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.001)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs, eta_min=1e-6
+        )
+
+        # 统计参数量
+        total_params = sum(p.numel() for p in model.parameters()) / 1e6
+        print(f"  Parameters: {total_params:.2f}M")
+
+        # 训练
+        best_val_acc = 0
+        best_epoch = 0
+        history = []
+
+        for epoch in range(1, args.epochs + 1):
+            train_loss, train_acc = train_epoch(model, train_loader, optimizer, device)
+            val_loss, val_acc = evaluate(model, val_loader, device)
+            scheduler.step()
+
+            history.append({
+                'epoch': epoch,
+                'train_loss': train_loss,
+                'train_acc': train_acc,
+                'val_loss': val_loss,
+                'val_acc': val_acc
+            })
+
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_epoch = epoch
+
+            if epoch % args.log_interval == 0 or epoch == 1:
+                print(f"  Epoch {epoch:3d}: Train Loss={train_loss:.4f} Acc={train_acc:.4f} | "
+                      f"Val Loss={val_loss:.4f} Acc={val_acc:.4f}")
+
+        results[config_name] = {
+            'best_val_acc': best_val_acc,
+            'best_epoch': best_epoch,
+            'final_train_acc': history[-1]['train_acc'],
+            'final_val_acc': history[-1]['val_acc'],
+            'params_M': total_params,
+            'history': history
+        }
+
+        print(f"  Best: Val Acc={best_val_acc:.4f} @ epoch {best_epoch}")
+
+    # 保存结果
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    result_file = output_dir / f'ablation_{args.dataset}_{timestamp}.json'
+
+    summary = {
+        name: {k: v for k, v in data.items() if k != 'history'}
+        for name, data in results.items()
+    }
+
+    with open(result_file, 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    # 打印总结
+    print(f"\n{'='*70}")
+    print(f"ABLATION SUMMARY")
+    print(f"{'='*70}")
+    print(f"{'Config':>20} | {'Best Val Acc':>12} | {'Params(M)':>10} | {'Delta':>8}")
+    print(f"{'-'*20}-+-{'-'*12}-+-{'-'*10}-+-{'-'*8}")
+
+    full_acc = results.get('full', {}).get('best_val_acc', 0)
+    for name in selected_configs:
+        data = results[name]
+        delta = data['best_val_acc'] - full_acc
+        marker = ""
+        if name != 'full':
+            if delta < -0.05:
+                marker = "<<< SIGNIFICANT DROP"
+            elif delta < -0.02:
+                marker = "< MODERATE DROP"
+            elif delta > 0.02:
+                marker = "> IMPROVEMENT"
+        print(f"{name:>20} | {data['best_val_acc']:>12.4f} | {data['params_M']:>10.2f} | {delta:>+8.4f} {marker}")
+
+    print(f"{'='*70}")
+    print(f"Results saved to: {result_file}")
+    print(f"\nInterpretation:")
+    print(f"  - 如果 'no_diffusion' 显著下降 (< -5%): 扩散是核心信息混合机制")
+    print(f"  - 如果 'no_reaction' 显著下降: 非线性反应不可忽略")
+    print(f"  - 如果 'embedding_only' 接近随机: 场演化真正在起作用")
+
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Ablation Study')
+    parser.add_argument('--configs', nargs='+', default=['all'],
+                       choices=['all', 'full', 'no_diffusion', 'no_reaction',
+                               'no_ei', 'no_feedback', 'no_hebbian', 'embedding_only'],
+                       help='要测试的消融配置')
+    parser.add_argument('--dataset', type=str, default='fashion_mnist',
+                       choices=['fashion_mnist', 'mnist', 'cifar10'])
+    parser.add_argument('--d_model', type=int, default=128)
+    parser.add_argument('--n_heads', type=int, default=4)
+    parser.add_argument('--n_layers', type=int, default=4)
+    parser.add_argument('--n_steps', type=int, default=3)
+    parser.add_argument('--patch_size', type=int, default=2)
+    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--lr', type=float, default=0.001)
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--data_root', type=str, default='./data')
+    parser.add_argument('--log_interval', type=int, default=2)
+    parser.add_argument('--output_dir', type=str, default='./results')
+    args = parser.parse_args()
+
+    run_ablation(args)
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+
+======================================================================
+# File: experiments\copy_task.py
+# Size: 16478 bytes
+======================================================================
+
+#!/usr/bin/env python3
+"""
+长程探针实验 (Long-Range Probe)
+===============================
+改善一：证明长程依赖能力
+
+任务：序列复制 (Copy Task)
+输入：随机token序列 [t1, t2, ..., tS]
+目标：复制相同序列 [t1, t2, ..., tS]
+
+变量：S = 16, 32, 64, 128, 256, 512
+
+对比对象：
+  - HormonicFormer v3 (你的)
+  - LSTM (负对照)
+  - Embedding Lookup (随机基线)
+
+成功标准：
+  - S=256 时准确率 > 90%
+  - S=512 时显著优于 LSTM
+  - 相位同步度随S增大保持稳定
+
+用法：
+  python experiments/copy_task.py --seq_lengths 16 64 256 512 --epochs 20
+"""
+import sys
+import argparse
+import json
+from pathlib import Path
+from datetime import datetime
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / 'models'))
+sys.path.insert(0, str(PROJECT_ROOT / 'field'))
+
+from hormonicformer_v3 import HormonicFormer
+
+
+# =============================================================================
+# Copy Task 数据
+# =============================================================================
+class CopyTaskDataset(Dataset):
+    """序列复制任务数据集"""
+    def __init__(self, vocab_size, seq_len, num_samples=10000):
+        self.vocab_size = vocab_size
+        self.seq_len = seq_len
+        self.num_samples = num_samples
+
+        # 预生成随机序列
+        self.data = torch.randint(0, vocab_size, (num_samples, seq_len))
+
+    def __len__(self):
+        return self.num_samples
+
+    def __getitem__(self, idx):
+        # 输入和目标完全相同（复制任务）
+        seq = self.data[idx]
+        return seq, seq.clone()
+
+
+# =============================================================================
+# 对比模型
+# =============================================================================
+class LSTMCopy(nn.Module):
+    """LSTM 基准模型（负对照：已知长程会崩）"""
+    def __init__(self, vocab_size, d_model=128, n_layers=2, dropout=0.1):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.lstm = nn.LSTM(
+            d_model, d_model, n_layers,
+            batch_first=True, dropout=dropout if n_layers > 1 else 0
+        )
+        self.fc = nn.Linear(d_model, vocab_size)
+
+    def forward(self, x):
+        # x: [B, S]
+        emb = self.embedding(x)  # [B, S, D]
+        out, _ = self.lstm(emb)  # [B, S, D]
+        logits = self.fc(out)  # [B, S, V]
+        return logits
+
+
+class EmbeddingOnly(nn.Module):
+    """纯嵌入查找（随机基线）"""
+    def __init__(self, vocab_size, d_model=128):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.fc = nn.Linear(d_model, vocab_size)
+
+    def forward(self, x):
+        emb = self.embedding(x)
+        logits = self.fc(emb)
+        return logits
+
+
+# =============================================================================
+# 将序列包装为类图像输入供 HormonicFormer 使用
+# =============================================================================
+def seq_to_patches(seq, patch_size=2, vocab_size=100):
+    """
+    将token序列转换为类似图像的patch格式
+    seq: [B, S] -> [B, 1, H, W]
+    将每个token ID 映射到一个标量值，然后reshape为方形
+    """
+    B, S = seq.shape
+    # token ID 归一化到 [-1, 1]
+    vals = (seq.float() / (vocab_size - 1)) * 2 - 1  # [B, S]
+    # 将序列reshape为方形（假设S是完美平方数）
+    H = W = int(S ** 0.5)
+    if H * W != S:
+        # 填充到最近的完美平方数
+        pad_len = (H + 1) ** 2 - S if H * W < S else H * W - S
+        if pad_len > 0:
+            vals = F.pad(vals, (0, pad_len), value=0)
+        H = W = int(vals.shape[1] ** 0.5)
+    img = vals.view(B, 1, H, W)
+    return img
+
+
+def patches_to_seq(logits, seq_len, vocab_size=100):
+    """
+    将HormonicFormer的分类输出映射回序列预测
+    logits: [B, num_classes] -> [B, S] 的预测token
+    这里简化处理：假设num_classes >= vocab_size
+    """
+    # 取前vocab_size个logits
+    logits = logits[:, :vocab_size]
+    preds = logits.argmax(dim=-1)  # [B]
+    return preds
+
+
+class HormonicWrapper(nn.Module):
+    """
+    包装 HormonicFormer 用于序列任务
+    将序列 -> patches -> HormonicFormer -> 逐token分类
+    """
+    def __init__(self, config, vocab_size, seq_len, patch_size=2):
+        super().__init__()
+        self.seq_len = seq_len
+        self.vocab_size = vocab_size
+        self.patch_size = patch_size
+
+        # 创建 HormonicFormer 配置
+        self.config = config
+        self.model = HormonicFormer(config)
+
+        # 替换分类头以支持 vocab_size 输出
+        d_model = config['model']['d_model']
+        self.model.classifier = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(d_model // 2, vocab_size)
+        )
+
+    def forward(self, seq):
+        """seq: [B, S] -> logits: [B, S, V]"""
+        B, S = seq.shape
+
+        # 序列 -> 伪图像patches
+        img = seq_to_patches(seq, self.patch_size, self.vocab_size)  # [B, 1, H, W]
+
+        # 确保尺寸匹配 (pad if needed)
+        _, _, H, W = img.shape
+        expected_size = self.config['model']['seq_len']
+        actual_patches = (H // self.patch_size) * (W // self.patch_size)
+
+        # 通过 HormonicFormer
+        # 返回每个patch的预测
+        x = self.model.patch_embed(img)  # [B, d_model, H', W']
+        x = x.flatten(2).transpose(1, 2)  # [B, seq_len, d_model]
+
+        # 通过每个 block
+        x_embed = x.detach().clone()
+        for block in self.model.blocks:
+            x = block(x, x_embed=x_embed if block.use_feedback else None)
+
+        # 对每个位置预测token
+        logits = self.model.classifier(x)  # [B, seq_len, vocab_size]
+
+        # 取前S个位置 (去掉padding)
+        logits = logits[:, :S, :]
+
+        return logits
+
+
+# =============================================================================
+# 训练与评估
+# =============================================================================
+def train_epoch(model, loader, optimizer, device, vocab_size):
+    model.train()
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    for x, y in loader:
+        x, y = x.to(device), y.to(device)
+        optimizer.zero_grad()
+
+        logits = model(x)  # [B, S, V]
+
+        # 计算交叉熵损失
+        B, S, V = logits.shape
+        loss = F.cross_entropy(
+            logits.reshape(B * S, V),
+            y.reshape(B * S)
+        )
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)  # [B, S]
+        correct += (pred == y).sum().item()
+        total += B * S
+
+    return total_loss / len(loader), correct / total
+
+
+@torch.no_grad()
+def evaluate(model, loader, device, vocab_size):
+    model.eval()
+    total_loss = 0
+    correct = 0
+    total = 0
+    all_accuracies = []  # 每个样本的准确率
+
+    for x, y in loader:
+        x, y = x.to(device), y.to(device)
+        logits = model(x)
+
+        B, S, V = logits.shape
+        loss = F.cross_entropy(
+            logits.reshape(B * S, V),
+            y.reshape(B * S)
+        )
+
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)  # [B, S]
+
+        # 每个位置的准确率
+        token_correct = (pred == y).float()  # [B, S]
+        all_accuracies.extend(token_correct.mean(dim=1).cpu().tolist())
+
+        correct += (pred == y).sum().item()
+        total += B * S
+
+    avg_acc = correct / total
+    seq_acc = sum(1 for a in all_accuracies if a > 0.99) / len(all_accuracies)  # 完全正确的序列比例
+
+    return total_loss / len(loader), avg_acc, seq_acc
+
+
+# =============================================================================
+# 相位同步度分析
+# =============================================================================
+def analyze_phase_sync(model, loader, device):
+    """分析 HormonicFormer 各层的相位同步度"""
+    if not hasattr(model, 'model'):
+        return None
+
+    model.eval()
+    sync_by_layer = {i: [] for i in range(len(model.model.blocks))}
+
+    with torch.no_grad():
+        for x, _ in loader:
+            x = x.to(device)
+            # 前向传播并收集 Hebbian 统计
+            logits = model(x)
+            for stat in model.model.get_hebbian_stats():
+                sync_by_layer[stat['layer']].append(stat['G_mean'])
+
+    result = {}
+    for layer, values in sync_by_layer.items():
+        if values:
+            result[f'layer_{layer}'] = {
+                'mean_sync': sum(values) / len(values),
+                'std_sync': (sum((v - sum(values)/len(values))**2 for v in values) / len(values)) ** 0.5
+            }
+    return result
+
+
+# =============================================================================
+# 主实验
+# =============================================================================
+def run_experiment(args):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Device: {device}")
+
+    results = {}
+
+    for seq_len in args.seq_lengths:
+        print(f"\n{'='*60}")
+        print(f"Sequence Length: {seq_len}")
+        print(f"{'='*60}")
+
+        # 数据
+        train_ds = CopyTaskDataset(args.vocab_size, seq_len, num_samples=args.train_samples)
+        val_ds = CopyTaskDataset(args.vocab_size, seq_len, num_samples=args.val_samples)
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+        val_loader = DataLoader(val_ds, batch_size=args.batch_size)
+
+        results[seq_len] = {}
+
+        # 对每个模型
+        for model_name in args.models:
+            print(f"\n  Training: {model_name}...")
+
+            if model_name == 'hormonic':
+                # 计算需要的配置
+                H = W = int((seq_len ** 0.5))
+                if H * H < seq_len:
+                    H = W = H + 1
+                num_patches = (H // 2) * (W // 2)  # patch_size=2
+
+                config = {
+                    'model': {
+                        'd_model': args.d_model,
+                        'n_heads': args.n_heads,
+                        'n_layers': args.n_layers,
+                        'seq_len': num_patches,
+                        'n_steps': args.n_steps,
+                        'patch_size': 2,
+                        'n_classes': args.vocab_size,
+                        'D0_amp': 0.1, 'D0_phase': 0.1, 'dt': 0.05,
+                        'ei_balance': {
+                            'enabled': True, 'tau_e': 2.0, 'tau_i': 1.0,
+                            'gamma_e': 1.0, 'gamma_i': 0.8, 'w_inh': 0.3, 'inh_radius': 3
+                        },
+                        'sensory_feedback': {
+                            'enabled': True, 'feedback_strength': 0.3, 'feedback_freq': 1
+                        },
+                        'hebbian': {
+                            'enabled': True, 'eta_hebb': 0.001, 'eta_anti': 0.0005,
+                            'sync_threshold': 0.3, 'tau_hebb': 10, 'decay': 0.999
+                        },
+                    },
+                    'pc': {'use_pc': False, 'pred_hidden_mult': 4, 'aux_weight': 0.01}
+                }
+                model = HormonicWrapper(config, args.vocab_size, seq_len)
+
+            elif model_name == 'lstm':
+                model = LSTMCopy(args.vocab_size, d_model=args.d_model,
+                                n_layers=args.n_layers, dropout=0.1)
+
+            elif model_name == 'embedding':
+                model = EmbeddingOnly(args.vocab_size, d_model=args.d_model)
+
+            else:
+                raise ValueError(f"Unknown model: {model_name}")
+
+            model = model.to(device)
+            optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=args.epochs * len(train_loader), eta_min=1e-6
+            )
+
+            # 训练
+            best_val_acc = 0
+            best_epoch = 0
+            history = []
+
+            for epoch in range(1, args.epochs + 1):
+                train_loss, train_acc = train_epoch(model, train_loader, optimizer, device, args.vocab_size)
+                val_loss, val_acc, val_seq_acc = evaluate(model, val_loader, device, args.vocab_size)
+                scheduler.step()
+
+                history.append({
+                    'epoch': epoch,
+                    'train_loss': train_loss, 'train_acc': train_acc,
+                    'val_loss': val_loss, 'val_acc': val_acc, 'val_seq_acc': val_seq_acc
+                })
+
+                if val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    best_epoch = epoch
+
+                if epoch % args.log_interval == 0 or epoch == 1:
+                    print(f"    Epoch {epoch:3d}: Train Acc={train_acc:.4f}, "
+                          f"Val Acc={val_acc:.4f}, Val SeqAcc={val_seq_acc:.4f}")
+
+            # 最终评估
+            final_loss, final_acc, final_seq_acc = evaluate(model, val_loader, device, args.vocab_size)
+
+            results[seq_len][model_name] = {
+                'best_val_acc': best_val_acc,
+                'best_epoch': best_epoch,
+                'final_acc': final_acc,
+                'final_seq_acc': final_seq_acc,
+                'history': history
+            }
+
+            print(f"    Final: Token Acc={final_acc:.4f}, Seq Acc={final_seq_acc:.4f} "
+                  f"(best={best_val_acc:.4f} @ epoch {best_epoch})")
+
+    # 保存结果
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    result_file = output_dir / f'copy_task_results_{timestamp}.json'
+
+    # 序列化时去掉 history 以减小文件大小
+    summary = {}
+    for seq_len, models in results.items():
+        summary[str(seq_len)] = {
+            name: {k: v for k, v in data.items() if k != 'history'}
+            for name, data in models.items()
+        }
+
+    with open(result_file, 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    print(f"\n{'='*60}")
+    print(f"Results saved to: {result_file}")
+    print(f"{'='*60}")
+
+    # 打印总结表格
+    print(f"\n{'='*60}")
+    print(f"SUMMARY TABLE")
+    print(f"{'='*60}")
+    print(f"{'SeqLen':>8} | {'Model':>12} | {'Token Acc':>10} | {'Seq Acc':>10}")
+    print(f"{'-'*8}-+-{'-'*12}-+-{'-'*10}-+-{'-'*10}")
+    for seq_len in args.seq_lengths:
+        for model_name in args.models:
+            data = results[seq_len][model_name]
+            print(f"{seq_len:>8} | {model_name:>12} | {data['final_acc']:>10.4f} | {data['final_seq_acc']:>10.4f}")
+    print(f"{'='*60}")
+
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Long-Range Probe: Copy Task')
+    parser.add_argument('--seq_lengths', nargs='+', type=int,
+                       default=[16, 64, 256],
+                       help='序列长度列表')
+    parser.add_argument('--models', nargs='+', default=['hormonic', 'lstm', 'embedding'],
+                       choices=['hormonic', 'lstm', 'embedding'],
+                       help='要测试的模型')
+    parser.add_argument('--vocab_size', type=int, default=50,
+                       help='词表大小')
+    parser.add_argument('--d_model', type=int, default=128,
+                       help='模型维度')
+    parser.add_argument('--n_heads', type=int, default=4,
+                       help='注意力头数 (仅Hormonic)')
+    parser.add_argument('--n_layers', type=int, default=4,
+                       help='层数')
+    parser.add_argument('--n_steps', type=int, default=3,
+                       help='CGL演化步数')
+    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--lr', type=float, default=0.001)
+    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--train_samples', type=int, default=10000)
+    parser.add_argument('--val_samples', type=int, default=2000)
+    parser.add_argument('--log_interval', type=int, default=5)
+    parser.add_argument('--output_dir', type=str, default='./results')
+    args = parser.parse_args()
+
+    run_experiment(args)
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+
+======================================================================
+# File: experiments\copy_task_fixed.py
+# Size: 7710 bytes
+======================================================================
+
+"""
+修复的 Copy Task 实验
+简化版本：直接使用 1D 序列输入
+"""
+import sys
+import argparse
+from pathlib import Path
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / 'models'))
+sys.path.insert(0, str(PROJECT_ROOT / 'field'))
+
+from hormonicformer_v3 import HormonicFormer
+
+
+class CopyTaskDataset(Dataset):
+    """序列复制任务数据集"""
+    def __init__(self, vocab_size, seq_len, num_samples=10000):
+        self.vocab_size = vocab_size
+        self.seq_len = seq_len
+        self.num_samples = num_samples
+        self.data = torch.randint(0, vocab_size, (num_samples, seq_len))
+
+    def __len__(self):
+        return self.num_samples
+
+    def __getitem__(self, idx):
+        seq = self.data[idx]
+        return seq, seq.clone()
+
+
+class HormonicWrapper(nn.Module):
+    """包装 HormonicFormer 用于序列任务"""
+    def __init__(self, config, vocab_size, seq_len):
+        super().__init__()
+        self.seq_len = seq_len
+        self.vocab_size = vocab_size
+        self.config = config
+        
+        # 修改配置：使用 1x1 patch（每个 token 作为一个像素）
+        config['model']['patch_size'] = 1
+        config['model']['seq_len'] = seq_len  # 关键：确保 seq_len 匹配
+        
+        self.model = HormonicFormer(config)
+        
+        # 替换分类头
+        d_model = config['model']['d_model']
+        self.model.classifier = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(d_model // 2, vocab_size)
+        )
+
+    def forward(self, seq):
+        """seq: [B, S] -> logits: [B, S, V]"""
+        B, S = seq.shape
+        
+        # 将序列转换为单通道图像 [B, 1, 1, S]（高度为1的图像）
+        # 这样 patch_embed (kernel=1, stride=1) 会保持长度
+        vals = (seq.float() / (self.vocab_size - 1)) * 2 - 1  # 归一化到 [-1, 1]
+        img = vals.view(B, 1, 1, S)  # [B, 1, 1, S] - 1行，S列的图像
+        
+        # 通过 HormonicFormer
+        x = self.model.patch_embed(img)  # [B, d_model, 1, S]
+        x = x.flatten(2).transpose(1, 2)  # [B, S, d_model]
+        
+        # 通过 blocks
+        x_embed = x.detach().clone()
+        for block in self.model.blocks:
+            x = block(x, x_embed=x_embed if block.use_feedback else None)
+        
+        # 分类
+        logits = self.model.classifier(x)  # [B, S, vocab_size]
+        
+        return logits
+
+
+def train_epoch(model, loader, optimizer, device, vocab_size):
+    model.train()
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    for x, y in loader:
+        x, y = x.to(device), y.to(device)
+        optimizer.zero_grad()
+
+        logits = model(x)  # [B, S, V]
+        
+        B, S, V = logits.shape
+        loss = F.cross_entropy(
+            logits.reshape(B * S, V),
+            y.reshape(B * S)
+        )
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == y).sum().item()
+        total += B * S
+
+    return total_loss / len(loader), correct / total
+
+
+@torch.no_grad()
+def evaluate(model, loader, device, vocab_size):
+    model.eval()
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    for x, y in loader:
+        x, y = x.to(device), y.to(device)
+        logits = model(x)
+
+        B, S, V = logits.shape
+        loss = F.cross_entropy(
+            logits.reshape(B * S, V),
+            y.reshape(B * S)
+        )
+
+        total_loss += loss.item()
+        pred = logits.argmax(dim=-1)
+        correct += (pred == y).sum().item()
+        total += B * S
+
+    return total_loss / len(loader), correct / total
+
+
+def run_experiment(seq_len, epochs, batch_size, device):
+    vocab_size = 100
+    
+    print(f'\n{"="*60}')
+    print(f'Sequence Length: {seq_len}')
+    print(f'{"="*60}')
+    
+    # 创建配置
+    config = {
+        'model': {
+            'd_model': 128,
+            'n_heads': 4,
+            'n_layers': 2,
+            'seq_len': seq_len,  # 关键：匹配输入长度
+            'n_steps': 3,
+            'n_classes': vocab_size,
+            'patch_size': 1,  # 1x1 patch，保持长度
+            'D0_amp': 0.002,
+            'D0_phase': 0.002,
+            'dt': 0.02,
+            'noise_scale': 0.01,
+            'dropout': 0.1,
+            'ei_balance': {
+                'enabled': True,
+                'tau_e': 2.0,
+                'tau_i': 1.0,
+                'gamma_e': 1.0,
+                'gamma_i': 0.8,
+                'w_inh': 0.3,
+                'inh_radius': 3
+            },
+            'sensory_feedback': {
+                'enabled': True,
+                'feedback_strength': 0.3,
+                'feedback_freq': 1
+            },
+            'hebbian': {
+                'enabled': True,
+                'eta_hebb': 0.001,
+                'eta_anti': 0.0005,
+                'sync_threshold': 0.5,
+                'tau_hebb': 10.0,
+                'decay': 0.999
+            },
+            'cross_freq_coupling': {'enabled': False},
+            'energy_constraint': {'enabled': False}
+        },
+        'neuromod': {
+            'da_init': 0.5,
+            'da_min': 0.1,
+            'da_max': 0.9,
+            'use_cb': False
+        },
+        'bwo': {
+            'use_bwo': True,
+            'evolve_interval': 5,
+            'flip_ratio': 0.3
+        },
+        'pc': {
+            'use_pc': True,
+            'pred_hidden_mult': 4,
+            'aux_weight': 0.01
+        }
+    }
+    
+    # 创建模型
+    model = HormonicWrapper(config, vocab_size, seq_len).to(device)
+    
+    print(f'  Model: {sum(p.numel() for p in model.parameters())/1e6:.2f}M params')
+    
+    # 数据集
+    train_ds = CopyTaskDataset(vocab_size, seq_len, num_samples=10000)
+    val_ds = CopyTaskDataset(vocab_size, seq_len, num_samples=1000)
+    
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    
+    # 优化器
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=0.001,
+        weight_decay=0.001
+    )
+    
+    # 训练
+    best_acc = 0
+    for epoch in range(epochs):
+        train_loss, train_acc = train_epoch(model, train_loader, optimizer, device, vocab_size)
+        val_loss, val_acc = evaluate(model, val_loader, device, vocab_size)
+        
+        print(f'  Epoch {epoch+1}/{epochs}: Train Acc={train_acc*100:.1f}%, Val Acc={val_acc*100:.1f}%')
+        
+        if val_acc > best_acc:
+            best_acc = val_acc
+    
+    print(f'\n  Best Val Acc: {best_acc*100:.1f}%')
+    return best_acc
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--seq_lengths', type=int, nargs='+', default=[16, 64, 128])
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--batch_size', type=int, default=64)
+    args = parser.parse_args()
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f'Device: {device}')
+    if device.type == 'cuda':
+        print(f'  GPU: {torch.cuda.get_device_name(0)}')
+    
+    results = {}
+    for seq_len in args.seq_lengths:
+        acc = run_experiment(seq_len, args.epochs, args.batch_size, device)
+        results[seq_len] = acc
+    
+    print(f'\n{"="*60}')
+    print('Summary:')
+    for seq_len, acc in sorted(results.items()):
+        print(f'  S={seq_len}: {acc*100:.1f}%')
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+
+======================================================================
+# File: copy_task_dataset.py
+# Size: 2462 bytes
+======================================================================
+
+"""
+Copy Task Dataset for HormonicFormer v3
+"""
+import torch
+from torch.utils.data import Dataset
+
+
+class CopyTaskDataset(Dataset):
+    """
+    Copy Task: 输入 [seq, marker, padding], 输出 [padding, seq]
+    
+    Args:
+        seq_len: 总序列长度
+        copy_len: 需要复制的序列长度 (默认 seq_len // 4)
+        vocab_size: 词汇表大小 (不含特殊标记)
+        num_samples: 样本数量
+        d_model: 模型维度 (用于扩展输入)
+    """
+    def __init__(self, seq_len=128, copy_len=None, vocab_size=10, 
+                 num_samples=10000, d_model=128, seed=42):
+        self.seq_len = seq_len
+        self.copy_len = copy_len or seq_len // 4
+        self.vocab_size = vocab_size  # 0-9
+        self.num_samples = num_samples
+        self.d_model = d_model
+        
+        # Special tokens
+        self.MARKER = vocab_size  # 标记复制开始 (10)
+        self.PAD = 0  # 填充
+        
+        # Fix seed for reproducibility
+        self.rng = torch.Generator()
+        self.rng.manual_seed(seed)
+        
+    def __len__(self):
+        return self.num_samples
+    
+    def __getitem__(self, idx):
+        # Generate random sequence to copy (1-9, avoid 0 which is padding)
+        src = torch.randint(1, self.vocab_size, (self.copy_len,), generator=self.rng)
+        
+        # Build input: [src, MARKER, padding]
+        input_seq = torch.zeros(self.seq_len, dtype=torch.long)
+        input_seq[:self.copy_len] = src
+        input_seq[self.copy_len] = self.MARKER
+        # rest is padding (0)
+        
+        # Build target: [padding, src]
+        target = torch.zeros(self.seq_len, dtype=torch.long)
+        target[self.seq_len - self.copy_len:] = src
+        
+        # Expand input to [seq_len, d_model] for HormonicFormer
+        # One-hot encode (vocab_size + 1 for marker)
+        input_emb = torch.nn.functional.one_hot(input_seq, num_classes=self.vocab_size + 1).float()
+        
+        # Project to d_model using random projection (fixed)
+        proj = torch.randn(self.vocab_size + 1, self.d_model) * 0.1
+        input_emb = input_emb @ proj  # [seq_len, d_model]
+            
+        return input_emb, target
+
+
+class CopyTaskValDataset(CopyTaskDataset):
+    """Validation set with different seed"""
+    def __init__(self, seq_len=128, copy_len=None, vocab_size=10, 
+                 num_samples=1000, d_model=128):
+        super().__init__(seq_len, copy_len, vocab_size, num_samples, d_model, seed=2024)
+
+
+
+
+======================================================================
+# 实验结果摘要
+======================================================================
+
+## Copy Task 实验（成功）
+
+### S=16
+- 3 epochs, 58.7% accuracy
+- 证明模型可以学习序列任务
+
+### S=128（长程依赖）
+- Epoch 1: 70.0% val acc
+- Epoch 3: 89.8% val acc
+- Epoch 5: 100% val acc ✓
+- **结论：HormonicFormer v3 可以处理 128 长度的长程依赖**
+
+### S=256（极限测试）
+- Epoch 1: 70.0% val acc
+- Epoch 2: 90.0% val acc
+- Epoch 4: 100% val acc ✓
+- **结论：S=256 也达到完美复制！**
+
+## Char LM 实验（部分成功）
+
+### 问题
+- Epoch 1 可以完成（Loss ~2.9, PPL ~18.7, Acc ~20%）
+- Epoch 2 开始时进程退出，原因不明
+- 可能原因：DataLoader 迭代器问题、Python 环境问题
+
+### 成果
+- 证明 HormonicFormer v3 可以做字符级语言建模
+- Loss 从 3.98 降到 2.88（第一个 epoch 内）
+- 准确率 20% > 随机基线 2.6%
+
+## 技术方案验证
+
+### Wrapper 模式（成功）
+```
+序列 [B, S] → 伪图像 [B, 1, 1, S] → patch_embed → blocks → 分类 → 序列预测 [B, S, vocab]
+```
+
+### 关键配置
+- patch_size=1（保持序列长度）
+- 禁用 EI、Hebbian、BWO、PC（简化版）
+- d_model=64, n_layers=2（轻量级）
+
+## 文件清单
+
+1. train_working.py
+2. train_charlm_debug.py
+3. train_s128.py
+4. train_s256.py
+5. train_minimal.py
+6. test_copy_simple.py
+7. test_dataloader.py
+8. test_all_steps.py
+9. experiments\ablation.py
+10. experiments\copy_task.py
+11. experiments\copy_task_fixed.py
+12. copy_task_dataset.py
+
+======================================================================
+# 打包时间: 2026-05-27
+======================================================================

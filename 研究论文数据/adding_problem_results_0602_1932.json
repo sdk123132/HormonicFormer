@@ -1,0 +1,102 @@
+{
+  "S=50": {
+    "hormonic": {
+      "best_val_loss": 0.00018866968457587063,
+      "baseline_mse": 0.17388278245925903,
+      "relative_improvement": 99.89149570465088,
+      "params": 105473
+    },
+    "transformer": {
+      "best_val_loss": 0.0001546523708384484,
+      "baseline_mse": 0.17388278245925903,
+      "relative_improvement": 99.91105794906616,
+      "params": 105473
+    },
+    "lstm": {
+      "best_val_loss": 0.00019622007675934583,
+      "baseline_mse": 0.17388278245925903,
+      "relative_improvement": 99.88715648651123,
+      "params": 68865
+    }
+  },
+  "S=100": {
+    "hormonic": {
+      "best_val_loss": 0.00018972982070408762,
+      "baseline_mse": 0.16336311399936676,
+      "relative_improvement": 99.88386034965515,
+      "params": 108673
+    },
+    "transformer": {
+      "best_val_loss": 0.00015917737619020045,
+      "baseline_mse": 0.16336311399936676,
+      "relative_improvement": 99.90256428718567,
+      "params": 108673
+    },
+    "lstm": {
+      "best_val_loss": 0.00039390684105455875,
+      "baseline_mse": 0.16336311399936676,
+      "relative_improvement": 99.75887537002563,
+      "params": 68865
+    }
+  },
+  "S=200": {
+    "hormonic": {
+      "best_val_loss": 0.00014813808957114816,
+      "baseline_mse": 0.15961173176765442,
+      "relative_improvement": 99.90718960762024,
+      "params": 115073
+    },
+    "transformer": {
+      "best_val_loss": 0.0002621047606226057,
+      "baseline_mse": 0.15961173176765442,
+      "relative_improvement": 99.83578324317932,
+      "params": 115073
+    },
+    "lstm": {
+      "best_val_loss": 0.00019161743693985045,
+      "baseline_mse": 0.15961173176765442,
+      "relative_improvement": 99.87995028495789,
+      "params": 68865
+    }
+  },
+  "S=500": {
+    "hormonic": {
+      "best_val_loss": 0.00028304907027632,
+      "baseline_mse": 0.1652650088071823,
+      "relative_improvement": 99.82873201370239,
+      "params": 134273
+    },
+    "transformer": {
+      "best_val_loss": 0.0005225425120443106,
+      "baseline_mse": 0.1652650088071823,
+      "relative_improvement": 99.68381524085999,
+      "params": 134273
+    },
+    "lstm": {
+      "best_val_loss": 0.0010035777231678367,
+      "baseline_mse": 0.1652650088071823,
+      "relative_improvement": 99.39274787902832,
+      "params": 68865
+    }
+  },
+  "S=1000": {
+    "hormonic": {
+      "best_val_loss": 0.00039218756137415767,
+      "baseline_mse": 0.1624424010515213,
+      "relative_improvement": 99.7585654258728,
+      "params": 166273
+    },
+    "transformer": {
+      "best_val_loss": 0.00037813361268490553,
+      "baseline_mse": 0.1624424010515213,
+      "relative_improvement": 99.76722002029419,
+      "params": 166273
+    },
+    "lstm": {
+      "best_val_loss": 0.0006925219786353409,
+      "baseline_mse": 0.1624424010515213,
+      "relative_improvement": 99.5736837387085,
+      "params": 68865
+    }
+  }
+}

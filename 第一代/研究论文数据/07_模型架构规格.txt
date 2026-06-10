@@ -1,0 +1,37 @@
+======================================================================
+HormonicFormer v3 模型架构规格
+======================================================================
+
+■ 核心架构: HormonicBlockV2
+
+输入 x -> [Embed + PosEnc] -> N x HormonicBlock -> [LayerNorm -> Output]
+
+HormonicBlock 内部:
+  1. CGL Field Evolution (核心)
+     psi(t+dt) = psi(t) + dt * [R(psi) + D * Laplacian(psi)]
+     R(psi) = alpha*psi - beta*|psi|^2*psi (反应项)
+     Laplacian = 有限差分或DFT (扩散项)
+
+  2. Hebbian Plasticity (可选)
+     G <- G + eta_hebb * (x outer y) - eta_anti * (G * |G|)
+     Prune & Regrow (BWO)
+
+  3. Neuromodulation (辅助)
+     - E/I Balance (侧抑制)
+     - Sensory Feedback
+     - Cross-Frequency Coupling
+     - Energy Constraint
+
+■ 实验配置
+
+| 配置 | 小规模 | 大规模(Hebbian) | 大规模(PureCGL) |
+|------|--------|----------------|----------------|
+| d_model | 64 | 768 | 768 |
+| n_layers | 1 | 12 | 12 |
+| n_heads | 4 | 12 | 12 |
+| n_steps | 2 | 2 | 1 |
+| dt | 0.02 | 0.02 | 0.02 |
+| dropout | 0.1 | 0.1 | 0.3 |
+| weight_decay | 0.01 | 0.01 | 0.1 |
+| Hebbian | Yes | Yes | No |
+| Params | 37K-107M | 107.1M | 81.9M |

@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HormonicFormer 训练监控面板</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+        
+        .header {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            padding: 20px 40px;
+            box-shadow: 0 4px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .header .status-badge {
+            margin-left: auto;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .status-training {
+            background: #10b981;
+            color: #fff;
+        }
+        
+        .status-idle {
+            background: #6b7280;
+            color: #fff;
+        }
+        
+        .container {
+            padding: 30px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .stat-card .label {
+            font-size: 14px;
+            color: #9ca3af;
+            margin-bottom: 8px;
+        }
+        
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #60a5fa;
+        }
+        
+        .stat-card .unit {
+            font-size: 14px;
+            color: #9ca3af;
+            margin-left: 4px;
+        }
+        
+        .stat-card.highlight .value {
+            color: #34d399;
+        }
+        
+        .stat-card.warning .value {
+            color: #fbbf24;
+        }
+        
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .chart-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 24px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .chart-card h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #e5e7eb;
+        }
+        
+        .chart-container {
+            height: 280px;
+        }
+        
+        .full-width {
+            grid-column: 1 / -1;
+        }
+        
+        .hebbian-section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 24px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 30px;
+        }
+        
+        .hebbian-section h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #e5e7eb;
+        }
+        
+        .hebbian-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+        }
+        
+        .hebbian-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 16px;
+            border-left: 3px solid #8b5cf6;
+        }
+        
+        .hebbian-card .layer {
+            font-size: 12px;
+            color: #9ca3af;
+            margin-bottom: 8px;
+        }
+        
+        .hebbian-card .metric {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        
+        .hebbian-card .metric-name {
+            color: #9ca3af;
+        }
+        
+        .hebbian-card .metric-value {
+            color: #f472b6;
+        }
+        
+        .timer-bar {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 24px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 30px;
+        }
+        
+        .timer-bar .progress-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+        
+        .timer-bar .progress-bar {
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .timer-bar .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        
+        .timer-bar .time-display {
+            display: flex;
+            gap: 30px;
+            margin-top: 16px;
+        }
+        
+        .time-item {
+            text-align: center;
+        }
+        
+        .time-item .label {
+            font-size: 12px;
+            color: #9ca3af;
+            margin-bottom: 4px;
+        }
+        
+        .time-item .value {
+            font-size: 20px;
+            font-weight: 600;
+            color: #a78bfa;
+        }
+        
+        /* 数据表格样式 */
+        .table-section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 24px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 30px;
+        }
+        
+        .table-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .table-header h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #e5e7eb;
+        }
+        
+        .download-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .download-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+        
+        .download-btn.csv {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: #fff;
+        }
+        
+        .download-btn.json {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: #fff;
+        }
+        
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        .table-container {
+            overflow-x: auto;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .data-table th,
+        .data-table td {
+            padding: 12px 16px;
+            text-align: right;
+            font-size: 13px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .data-table th {
+            text-align: center;
+            background: rgba(102, 126, 234, 0.1);
+            font-weight: 600;
+            color: #e5e7eb;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        
+        .data-table th:first-child,
+        .data-table td:first-child {
+            text-align: center;
+            min-width: 60px;
+        }
+        
+        .data-table tr:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+        
+        .data-table tr.best-row {
+            background: rgba(16, 185, 129, 0.15);
+        }
+        
+        .data-table td {
+            color: #d1d5db;
+        }
+        
+        .data-table .acc-value {
+            color: #34d399;
+        }
+        
+        .data-table .loss-value {
+            color: #f87171;
+        }
+        
+        .data-table .lr-value {
+            color: #fbbf24;
+        }
+        
+        .data-table .da-value {
+            color: #f472b6;
+        }
+        
+        .empty-table {
+            text-align: center;
+            padding: 40px;
+            color: #9ca3af;
+        }
+        
+        /* 滚动条样式 */
+        .table-container::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        .table-container::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        
+        .table-container::-webkit-scrollbar-thumb {
+            background: rgba(102, 126, 234, 0.5);
+            border-radius: 4px;
+        }
+        
+        .table-container::-webkit-scrollbar-thumb:hover {
+            background: rgba(102, 126, 234, 0.7);
+        }
+        
+        @media (max-width: 768px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .header {
+                padding: 15px 20px;
+            }
+            
+            .header h1 {
+                font-size: 18px;
+            }
+            
+            .download-buttons {
+                flex-direction: column;
+            }
+            
+            .download-btn {
+                width: 100%;
+                justify-content: center;
+            }
+            
+            .data-table th,
+            .data-table td {
+                padding: 8px 6px;
+                font-size: 11px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>
+            <span>🧠 HormonicFormer V3</span>
+            <span class="status-badge" id="status-badge">空闲</span>
+        </h1>
+    </div>
+    
+    <div class="container">
+        <div class="timer-bar">
+            <div class="progress-info">
+                <span>训练进度</span>
+                <span id="epoch-info">Epoch 0 / 0</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div class="time-display">
+                <div class="time-item">
+                    <div class="label">已运行</div>
+                    <div class="value" id="elapsed-time">00:00:00</div>
+                </div>
+                <div class="time-item">
+                    <div class="label">预计剩余</div>
+                    <div class="value" id="remaining-time">--:--:--</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card highlight">
+                <div class="label">最佳验证准确率</div>
+                <div class="value" id="best-val-acc">0.00</div>
+                <div class="unit">%</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">当前训练损失</div>
+                <div class="value" id="train-loss">0.0000</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">当前训练准确率</div>
+                <div class="value" id="train-acc">0.00</div>
+                <div class="unit">%</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">当前验证损失</div>
+                <div class="value" id="val-loss">0.0000</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">当前验证准确率</div>
+                <div class="value" id="val-acc">0.00</div>
+                <div class="unit">%</div>
+            </div>
+            <div class="stat-card warning">
+                <div class="label">学习率</div>
+                <div class="value" id="lr">0.000000</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">多巴胺 (DA)</div>
+                <div class="value" id="da">0.500</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">GPU显存</div>
+                <div class="value" id="gpu-memory">0</div>
+                <div class="unit">MB</div>
+            </div>
+        </div>
+        
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>📉 损失曲线</h3>
+                <div class="chart-container">
+                    <canvas id="loss-chart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>📈 准确率曲线</h3>
+                <div class="chart-container">
+                    <canvas id="acc-chart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>⚡ 学习率 & 神经调质</h3>
+                <div class="chart-container">
+                    <canvas id="lr-chart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>💊 DA / CB 变化</h3>
+                <div class="chart-container">
+                    <canvas id="neuromod-chart"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 数据表格区域 -->
+        <div class="table-section">
+            <div class="table-header">
+                <h3>📊 训练数据表格</h3>
+                <div class="download-buttons">
+                    <button class="download-btn csv" onclick="downloadCSV()">
+                        <span>📥</span> 下载 CSV
+                    </button>
+                    <button class="download-btn json" onclick="downloadJSON()">
+                        <span>📥</span> 下载 JSON
+                    </button>
+                </div>
+            </div>
+            <div class="table-container">
+                <table class="data-table" id="training-table">
+                    <thead>
+                        <tr>
+                            <th>Epoch</th>
+                            <th>Train Loss</th>
+                            <th>Train Acc (%)</th>
+                            <th>Val Loss</th>
+                            <th>Val Acc (%)</th>
+                            <th>LR</th>
+                            <th>DA</th>
+                            <th>CB</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body">
+                        <tr>
+                            <td colspan="8" class="empty-table">等待训练数据...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="hebbian-section">
+            <h3>🧬 Hebbian 突触可塑性统计</h3>
+            <div class="hebbian-grid" id="hebbian-grid">
+                <div style="color: #9ca3af; text-align: center; padding: 40px;">
+                    等待训练数据...
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.min.js"></script>
+    <script>
+        // 图表配置
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: { color: '#9ca3af' }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    titleColor: '#fff',
+                    bodyColor: '#fff'
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                    ticks: { color: '#9ca3af' },
+                    title: { display: true, text: 'Epoch', color: '#9ca3af' }
+                },
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                    ticks: { color: '#9ca3af' }
+                }
+            }
+        };
+        
+        // 初始化图表
+        const lossChart = new Chart(document.getElementById('loss-chart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: '训练损失', data: [], borderColor: '#60a5fa', tension: 0.4 },
+                    { label: '验证损失', data: [], borderColor: '#f87171', tension: 0.4 }
+                ]
+            },
+            options: { ...chartOptions, scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, beginAtZero: false } } }
+        });
+        
+        const accChart = new Chart(document.getElementById('acc-chart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: '训练准确率', data: [], borderColor: '#34d399', tension: 0.4 },
+                    { label: '验证准确率', data: [], borderColor: '#a78bfa', tension: 0.4 }
+                ]
+            },
+            options: { ...chartOptions, scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, min: 0, max: 100 } } }
+        });
+        
+        const lrChart = new Chart(document.getElementById('lr-chart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{ label: '学习率', data: [], borderColor: '#fbbf24', tension: 0.4 }]
+            },
+            options: { ...chartOptions, scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, beginAtZero: false } } }
+        });
+        
+        const neuromodChart = new Chart(document.getElementById('neuromod-chart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'DA (多巴胺)', data: [], borderColor: '#f472b6', tension: 0.4 },
+                    { label: 'CB (大麻素)', data: [], borderColor: '#a3e635', tension: 0.4 }
+                ]
+            },
+            options: { ...chartOptions, scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, min: 0, max: 1 } } }
+        });
+        
+        // WebSocket连接
+        const socket = io();
+        
+        socket.on('init_data', (data) => {
+            updateAllCharts(data);
+            updateStats(data);
+            updateProgress(data);
+            updateHebbian(data);
+            updateTable(data);
+            updateStatus(data.is_training);
+        });
+        
+        socket.on('data_update', (data) => {
+            updateAllCharts(data);
+            updateStats(data);
+            updateProgress(data);
+            updateHebbian(data);
+            updateTable(data);
+            updateStatus(data.is_training);
+        });
+        
+        function updateAllCharts(data) {
+            const labels = data.metrics.train_loss.map((_, i) => i + 1);
+            
+            lossChart.data.labels = labels;
+            lossChart.data.datasets[0].data = data.metrics.train_loss;
+            lossChart.data.datasets[1].data = data.metrics.val_loss;
+            lossChart.update('none');
+            
+            accChart.data.labels = labels;
+            accChart.data.datasets[0].data = data.metrics.train_acc;
+            accChart.data.datasets[1].data = data.metrics.val_acc;
+            accChart.update('none');
+            
+            lrChart.data.labels = labels;
+            lrChart.data.datasets[0].data = data.metrics.lr;
+            lrChart.update('none');
+            
+            neuromodChart.data.labels = labels;
+            neuromodChart.data.datasets[0].data = data.metrics.da;
+            neuromodChart.data.datasets[1].data = data.metrics.cb;
+            neuromodChart.update('none');
+        }
+        
+        function updateStats(data) {
+            const metrics = data.metrics;
+            
+            if (metrics.val_acc.length > 0) {
+                const bestAcc = Math.max(...metrics.val_acc);
+                document.getElementById('best-val-acc').textContent = bestAcc.toFixed(2);
+            }
+            
+            if (metrics.train_loss.length > 0) {
+                document.getElementById('train-loss').textContent = metrics.train_loss[metrics.train_loss.length - 1].toFixed(4);
+            }
+            if (metrics.train_acc.length > 0) {
+                document.getElementById('train-acc').textContent = metrics.train_acc[metrics.train_acc.length - 1].toFixed(2);
+            }
+            if (metrics.val_loss.length > 0) {
+                document.getElementById('val-loss').textContent = metrics.val_loss[metrics.val_loss.length - 1].toFixed(4);
+            }
+            if (metrics.val_acc.length > 0) {
+                document.getElementById('val-acc').textContent = metrics.val_acc[metrics.val_acc.length - 1].toFixed(2);
+            }
+            if (metrics.lr.length > 0) {
+                document.getElementById('lr').textContent = metrics.lr[metrics.lr.length - 1].toFixed(6);
+            }
+            if (metrics.da.length > 0) {
+                document.getElementById('da').textContent = metrics.da[metrics.da.length - 1].toFixed(3);
+            }
+            
+            document.getElementById('gpu-memory').textContent = data.gpu_memory;
+        }
+        
+        function updateProgress(data) {
+            const current = data.current_epoch;
+            const total = data.total_epochs;
+            
+            document.getElementById('epoch-info').textContent = `Epoch ${current} / ${total}`;
+            
+            const progress = total > 0 ? (current / total) * 100 : 0;
+            document.getElementById('progress-fill').style.width = `${progress}%`;
+            
+            const elapsed = data.elapsed_time;
+            document.getElementById('elapsed-time').textContent = formatTime(elapsed);
+            
+            if (current > 0 && total > 0) {
+                const avgTimePerEpoch = elapsed / current;
+                const remaining = (total - current) * avgTimePerEpoch;
+                document.getElementById('remaining-time').textContent = formatTime(remaining);
+            }
+        }
+        
+        function updateHebbian(data) {
+            const stats = data.hebbian_stats;
+            const grid = document.getElementById('hebbian-grid');
+            
+            if (!stats || stats.length === 0) {
+                grid.innerHTML = '<div style="color: #9ca3af; text-align: center; padding: 40px;">等待训练数据...</div>';
+                return;
+            }
+            
+            grid.innerHTML = stats.map(stat => `
+                <div class="hebbian-card">
+                    <div class="layer">Layer ${stat.layer}</div>
+                    <div class="metric">
+                        <span class="metric-name">G均值</span>
+                        <span class="metric-value">${stat.G_mean.toFixed(4)}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-name">G标准差</span>
+                        <span class="metric-value">${stat.G_std.toFixed(4)}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-name">稀疏度</span>
+                        <span class="metric-value">${(stat.G_sparsity * 100).toFixed(1)}%</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-name">存活比例</span>
+                        <span class="metric-value">${(stat.alive_ratio * 100).toFixed(1)}%</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function updateTable(data) {
+            const metrics = data.metrics;
+            const tbody = document.getElementById('table-body');
+            
+            if (metrics.train_loss.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="empty-table">等待训练数据...</td></tr>';
+                return;
+            }
+            
+            // 找到最佳验证准确率的epoch
+            let bestEpoch = 0;
+            let bestValAcc = 0;
+            if (metrics.val_acc.length > 0) {
+                bestValAcc = Math.max(...metrics.val_acc);
+                bestEpoch = metrics.val_acc.indexOf(bestValAcc) + 1;
+            }
+            
+            // 生成表格行
+            const rows = [];
+            for (let i = 0; i < metrics.train_loss.length; i++) {
+                const isBest = (i + 1) === bestEpoch;
+                rows.push(`
+                    <tr ${isBest ? 'class="best-row"' : ''}>
+                        <td>${i + 1}</td>
+                        <td class="loss-value">${metrics.train_loss[i].toFixed(4)}</td>
+                        <td class="acc-value">${metrics.train_acc[i].toFixed(2)}</td>
+                        <td class="loss-value">${metrics.val_loss[i].toFixed(4)}</td>
+                        <td class="acc-value">${metrics.val_acc[i].toFixed(2)}</td>
+                        <td class="lr-value">${metrics.lr[i].toFixed(6)}</td>
+                        <td class="da-value">${metrics.da[i].toFixed(3)}</td>
+                        <td>${metrics.cb[i].toFixed(3)}</td>
+                    </tr>
+                `);
+            }
+            
+            tbody.innerHTML = rows.join('');
+        }
+        
+        function updateStatus(isTraining) {
+            const badge = document.getElementById('status-badge');
+            badge.textContent = isTraining ? '训练中' : '空闲';
+            badge.className = `status-badge ${isTraining ? 'status-training' : 'status-idle'}`;
+        }
+        
+        function formatTime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        // 下载CSV
+        function downloadCSV() {
+            window.open('/api/download/csv', '_blank');
+        }
+        
+        // 下载JSON
+        function downloadJSON() {
+            window.open('/api/download/json', '_blank');
+        }
+        
+        // 定期刷新数据
+        setInterval(() => {
+            fetch('/api/metrics')
+                .then(res => res.json())
+                .then(data => {
+                    updateAllCharts(data);
+                    updateStats(data);
+                    updateProgress(data);
+                    updateHebbian(data);
+                    updateTable(data);
+                })
+                .catch(err => console.error('Failed to fetch metrics:', err));
+        }, 5000);
+    </script>
+</body>
+</html>

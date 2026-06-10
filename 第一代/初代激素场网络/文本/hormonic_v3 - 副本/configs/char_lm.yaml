@@ -1,0 +1,96 @@
+# HormonicFormer v3 Character-Level Language Model Config for RTX 5070 8GB
+
+name: "hormonic_v3_char_lm"
+
+model:
+  task: "char_lm"  # 新增：任务类型
+  vocab_size: 65   # 英文字母 + 标点 + 空格
+  seq_len: 256     # 序列长度
+  d_model: 128
+  n_heads: 4
+  n_layers: 2      # 显存有限，保持浅层
+  n_steps: 3
+  
+  # CGL parameters
+  D0_amp: 0.002
+  D0_phase: 0.002
+  dt: 0.02
+  noise_scale: 0.0  # 语言任务可去掉噪声
+  
+  # E/I balance
+  ei_balance:
+    enabled: true
+    tau_e: 2.0
+    tau_i: 1.0
+    gamma_e: 1.0
+    gamma_i: 0.8
+    w_inh: 0.3
+    inh_radius: 3
+  
+  # Sensory feedback
+  sensory_feedback:
+    enabled: true
+    feedback_strength: 0.3
+    feedback_freq: 1
+  
+  # Hebbian
+  hebbian:
+    enabled: true
+    eta_hebb: 0.001
+    eta_anti: 0.0005
+    sync_threshold: 0.3
+    tau_hebb: 10.0
+    decay: 0.999
+  
+  # Disabled modules
+  cross_freq_coupling:
+    enabled: false
+  energy_constraint:
+    enabled: false
+
+train:
+  epochs: 30
+  batch_size: 32      # 语言序列更长，batch 要小
+  accumulation_steps: 2
+  
+  lr: 0.001
+  weight_decay: 0.001
+  scheduler: cosine
+  warmup_epochs: 2
+  grad_clip: 1.0
+  
+  # Data
+  dataset: "tiny_shakespeare"
+  data_path: "./data/tinyshakespeare.txt"
+  num_workers: 0
+  pin_memory: false
+  
+  seed: 42
+  use_amp: false      # 建议关闭，避免 NaN
+  nan_guard: true
+  
+  checkpoint_dir: ./checkpoints_char_lm
+  log_dir: ./logs_char_lm
+  save_interval: 5
+  log_interval: 50
+  max_stale_epochs: 10
+
+neuromod:
+  da_init: 2.5
+  da_min: 0.1
+  da_max: 0.9
+  da_ema_alpha: 0.9
+  da_var_alpha: 0.9
+  use_cb: false
+
+bwo:
+  use_bwo: true
+  pop_size: 10
+  eval_samples: 1000
+  evolve_interval: 5
+  flip_ratio: 0.30
+
+pc:
+  use_pc: true
+  pred_hidden_mult: 2
+  aux_weight: 0.01

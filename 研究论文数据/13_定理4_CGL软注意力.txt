@@ -1,0 +1,133 @@
+# 定理 4 证明草案：CGL ≈ 软注意力
+
+**日期**: 2026-06-01  
+**目标**: 证明 CGL 场在特定条件下等价于软注意力机制
+
+---
+
+## 一、核心思想
+
+**软注意力**（Soft Attention）:
+$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right) V$$
+
+**CGL 场**（Complex Ginzburg-Landau）:
+$$\frac{\partial \psi}{\partial t} = \alpha \psi - \beta |\psi|^2 \psi + D \nabla^2 \psi + \text{input}$$
+
+**核心洞察**: CGL 的极限环吸引子可以看作一种"动态注意力"——相位锁定到输入信号的特定模式。
+
+---
+
+## 二、数学推导框架
+
+### 2.1 CGL 的稳态解
+
+在输入驱动的稳态下，CGL 场的振幅趋于饱和：
+$$|\psi|^2 \approx \frac{\alpha + \text{Re}(\text{input}/\psi^*)}{\beta}$$
+
+相位满足：
+$$\frac{d\theta}{dt} = \omega_0 - \text{Im}(\text{input}/\psi^*)$$
+
+### 2.2 与注意力的对应
+
+| 注意力机制 | CGL 场 |
+|-----------|--------|
+| Query (Q) | 当前场状态 $\psi$ |
+| Key (K) | 输入信号的相位模式 |
+| Value (V) | 输入信号的振幅 |
+| Softmax | 相位锁定竞争（胜者通吃） |
+| $\sqrt{d_k}$ | 极限环半径 $r^*$ |
+
+### 2.3 关键近似
+
+当输入是多个模式的叠加时：
+$$\text{input} = \sum_i a_i e^{i\phi_i}$$
+
+CGL 场会**相位锁定**到最强模式：
+$$\psi \approx r^* e^{i\phi_k}, \quad k = \arg\max_i |a_i|$$
+
+这等价于**硬注意力**（argmax）。
+
+当加入噪声或温度参数 $T$ 时：
+$$P(\text{锁定到 } i) \propto \exp(|a_i|/T)$$
+
+这退化为**软注意力**（softmax）。
+
+---
+
+## 三、形式化定理陈述
+
+**定理 4** (CGL as Soft Attention).
+
+设 CGL 场处于输入驱动的稳态，输入为 $N$ 个相位模式的叠加：
+$$I(t) = \sum_{j=1}^N A_j e^{i(\omega_j t + \phi_j)}$$
+
+则 CGL 场的响应可以近似为：
+$$\psi(t) \approx r^* \sum_{j=1}^N p_j e^{i(\omega_j t + \phi_j)}$$
+
+其中概率权重 $p_j$ 满足：
+$$p_j = \frac{\exp(\gamma A_j / \sigma)}{\sum_k \exp(\gamma A_k / \sigma)}$$
+
+这里 $\gamma$ 是 CGL 的增益参数，$\sigma$ 是噪声强度。
+
+**当 $\sigma \to 0$ 时，退化为硬注意力（argmax）。**
+
+**当 $\sigma > 0$ 时，等价于带温度参数的软注意力。**
+
+---
+
+## 四、验证实验设计
+
+### 4.1 实验目标
+验证 CGL 场对多模式输入的响应是否符合 softmax 分布。
+
+### 4.2 实验设置
+- 输入：两个竞争模式 $A_1 e^{i\omega_1 t} + A_2 e^{i\omega_2 t}$
+- 改变振幅比 $A_1/A_2$
+- 测量 CGL 场锁定到每个模式的概率
+- 对比 softmax 预测
+
+### 4.3 预期结果
+$$P(\text{锁定到模式1}) = \frac{e^{A_1/T}}{e^{A_1/T} + e^{A_2/T}}$$
+
+---
+
+## 五、与 Transformer 的对比
+
+| 特性 | Transformer | CGL |
+|------|-------------|-----|
+| 计算复杂度 | $O(N^2)$ | $O(N)$（局部场） |
+| 全局依赖 | 显式（所有位置） | 隐式（通过场传播） |
+| 可解释性 | 低（黑盒注意力图） | 高（物理场演化） |
+| 生物学基础 | 无 | 有（神经振荡） |
+| 连续时间 | 否（离散层） | 是（连续场） |
+
+---
+
+## 六、论文中的表述
+
+**定理 4** 将 HormonicFormer 与 Transformer 建立理论联系：
+
+> HormonicFormer 的 CGL 层可以看作一种**动态软注意力**，其中：
+> - 注意力权重不是显式计算的，而是通过场演化自然涌现
+> - 温度参数由噪声强度和 CGL 增益共同决定
+> - 复杂度从 $O(N^2)$ 降低到 $O(N)$
+
+这解释了为什么 HormonicFormer 在序列任务上能与 Transformer 竞争，同时保持更高的可解释性。
+
+---
+
+## 七、下一步工作
+
+1. [ ] 编写数值验证实验（两个竞争模式）
+2. [ ] 测量 CGL 的"有效温度"参数
+3. [ ] 对比 CGL 和 Transformer 的注意力图
+4. [ ] 分析 CGL 的 $O(N)$ 复杂度优势
+
+---
+
+## 八、参考文献
+
+1. Hopfield, J.J. (1982). Neural networks and physical systems with emergent collective computational abilities.
+2. Kuramoto, Y. (1984). Chemical Oscillations, Waves, and Turbulence.
+3. Vaswani et al. (2017). Attention is All You Need.
+4. Raffel & Strogatz (2010). Phase locking in noisy oscillators.

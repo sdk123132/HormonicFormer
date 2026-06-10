@@ -1,0 +1,16 @@
+[2026-05-26 16:48:41,656] Loading dataset...
+[2026-05-26 16:48:41,753] Train: 60000, Val: 10000
+[2026-05-26 16:48:41,754] Creating model...
+[2026-05-26 16:48:42,045] Parameters: 0.74M total, 0.35M trainable
+C:\Users\MR\Desktop\³õ´ú¼¤ËØ³¡ÍøÂç\hormonic_v3\local_train.py:325: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = GradScaler(enabled=config['train']['use_amp'])
+[2026-05-26 16:48:42,047] Starting training: 50 epochs
+C:\Users\MR\Desktop\³õ´ú¼¤ËØ³¡ÍøÂç\hormonic_v3\local_train.py:139: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast(enabled=use_amp):
+[2026-05-26 16:48:56,773]   Batch[   0/937] Loss: 2.7141 CE: 2.7001 Acc: 9.4% LR: 0.000005
+[2026-05-26 16:53:56,999]   Batch[  50/937] Loss: 2.5539 CE: 2.5402 Acc: 9.7% LR: 0.000012
+[2026-05-26 16:58:33,177]   Batch[ 100/937] Loss: 2.4649 CE: 2.4518 Acc: 10.3% LR: 0.000018
+[2026-05-26 17:02:56,941]   Batch[ 150/937] Loss: 2.4061 CE: 2.3936 Acc: 12.2% LR: 0.000025
+[2026-05-26 17:07:29,478]   Batch[ 200/937] Loss: 2.3648 CE: 2.3531 Acc: 13.3% LR: 0.000031
+[2026-05-26 17:12:04,426]   Batch[ 250/937] Loss: 2.3297 CE: 2.3187 Acc: 14.3% LR: 0.000038
+[2026-05-26 17:16:38,639]   Batch[ 300/937] Loss: 2.3002 CE: 2.2899 Acc: 15.1% LR: 0.000045

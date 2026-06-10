@@ -1,0 +1,135 @@
+# HormonicFormer v3 - DCU训练配置
+# 适配国家算力网 PyTorch 2.7.1 + DTK 26.04
+
+name: "hormonic_v3_dcu_8L_512d"
+
+model:
+  # 模型架构 (目标大模型)
+  d_model: 512
+  n_heads: 16
+  n_layers: 8
+  seq_len: 196          # 14x14 patches for 28x28 images
+  patch_size: 2
+  n_steps: 3            # CGL演化步数
+  n_classes: 10         # Fashion-MNIST
+
+  # CGL参数 (v3.1 数值稳定性修复)
+  # CFL条件: dt * D0 * |λ_max| / seq_len < 2/seq_len
+  # 对于seq_len=196, |λ_max|=9604:
+  #   dt=0.02 * D0=0.002 * 9604 / 196 = 0.002 (稳定)
+  D0_amp: 0.002         # 扩散系数 (大幅减小)
+  D0_phase: 0.002
+  dt: 0.02              # 时间步长 (减小)
+  n_steps: 10           # 演化步数 (增加以补偿小dt)
+  noise_scale: 0.005
+
+  # ===== 新增: 局部 E/I 平衡 =====
+  ei_balance:
+    enabled: true
+    tau_e: 2.0            # 兴奋时间常数 (快速)
+    tau_i: 1.0            # 抑制时间常数 (更快，侧抑制)
+    gamma_e: 1.0          # 兴奋强度
+    gamma_i: 0.8          # 抑制强度 (略弱于兴奋，避免过抑制)
+    w_inh: 0.3            # 局部侧抑制权重
+    inh_radius: 3         # 侧抑制的局部邻域半径 (tokens)
+
+  # ===== 新增: 感觉反馈 / 外部驱动 =====
+  sensory_feedback:
+    enabled: true
+    feedback_strength: 0.3    # I_ext 的权重系数
+    feedback_freq: 1          # 每多少步注入一次外部驱动 (1=每步都注)
+
+  # ===== 新增: Hebbian 实时可塑性 =====
+  hebbian:
+    enabled: true
+    eta_hebb: 0.001           # Hebbian 学习率
+    eta_anti: 0.0005          # 反 Hebbian 学习率
+    sync_threshold: 0.3       # 相位同步阈值
+    tau_hebb: 10.0            # Hebbian 更新的时间常数 (τ~10)
+    decay: 0.999              # G 矩阵的缓慢衰减 (防止无限增长)
+
+  # ===== 新增: 跨频耦合 (Priority 4) =====
+  cross_freq_coupling:
+    enabled: false            # 当前规模下关闭，深层模型开启
+    alpha_cfc: 0.1            # 耦合强度
+    coupling_mode: "deep_to_shallow"  # deep相位 -> shallow振幅
+
+  # ===== 新增: 能量约束 + 钙波 (Priority 5) =====
+  energy_constraint:
+    enabled: false
+    atp_budget: 1.0           # 每token每层的能量预算
+    atp_recovery: 0.1         # 能量恢复速率
+
+train:
+  # 训练参数
+  epochs: 50
+  batch_size: 256       # 双卡可支持
+  accumulation_steps: 1
+
+  # 优化器
+  lr: 0.0005
+  weight_decay: 0.001
+  scheduler: cosine
+  warmup_epochs: 0
+
+  # 数据
+  dataset: fashion_mnist
+  data_root: ./data
+  noise_sigma: 0.3      # 高斯噪声
+  num_workers: 8
+  pin_memory: true
+
+  # 系统
+  seed: 42
+  use_amp: true         # 混合精度
+  amp_exclude_ops: true # DCU兼容性
+  nan_guard: true       # NaN检测
+  detect_anomaly: false
+
+  # 检查点
+  checkpoint_dir: ./checkpoints
+  log_dir: ./logs
+  save_interval: 1
+  log_interval: 50
+  max_stale_epochs: 5   # 早停
+
+neuromod:
+  # DA (多巴胺) - v3.1 修复: 初始值设为接近初始CE loss
+  # Fashion-MNIST 10类, 初始CE loss ~2.3
+  # da_init=2.5 使初始DA~0.5 (中性探索), 避免初始surprise爆炸
+  da_init: 2.5
+  da_min: 0.1
+  da_max: 0.9
+  da_ema_alpha: 0.9      # 加快跟踪 (0.95->0.9)
+  da_var_alpha: 0.9
+
+  # CB (大麻素)
+  use_cb: false         # 当前规模下关闭
+  cb_gain: 2.0
+  cb_threshold: 0.25
+  tau_cb: 10.0
+
+  # G (胶质/BWO)
+  init_density: 0.3
+  target_sparsity: 0.70
+  sparsity_min: 0.65
+  sparsity_max: 0.75
+
+bwo:
+  # 脑波优化
+  use_bwo: true
+  pop_size: 20
+  eval_samples: 2000
+  evolve_interval: 5    # 每5epoch进化一次
+  flip_ratio: 0.02      # 重生比例
+
+pc:
+  # 预测编码
+  use_pc: true
+  pred_hidden_mult: 4
+  aux_weight: 0.01
+
+dist:
+  # 分布式
+  backend: nccl
+  find_unused_parameters: false

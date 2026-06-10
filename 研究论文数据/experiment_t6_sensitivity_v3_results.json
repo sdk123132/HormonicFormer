@@ -1,0 +1,180 @@
+{
+  "baseline_ppl": 411.00064732911426,
+  "base_config": {
+    "alpha": 0.731,
+    "beta": 0.5,
+    "D0": 0.002,
+    "g_coupling": 0.1
+  },
+  "sensitivities": [
+    {
+      "parameter": "alpha",
+      "avg_sensitivity": 18.776773154898986,
+      "results": [
+        {
+          "perturbation": -0.5,
+          "ppl": 1308.279608289564,
+          "ppl_change": 2.183157050460657,
+          "sensitivity": -4.366314100921314
+        },
+        {
+          "perturbation": -0.2,
+          "ppl": 423.95105224628753,
+          "ppl_change": 0.031509451387318775,
+          "sensitivity": -0.15754725693659385
+        },
+        {
+          "perturbation": -0.1,
+          "ppl": 3278.577658354432,
+          "ppl_change": 6.97706203058378,
+          "sensitivity": -69.7706203058378
+        },
+        {
+          "perturbation": 0.1,
+          "ppl": 134.81939289303332,
+          "ppl_change": -0.6719727967117413,
+          "sensitivity": -6.719727967117413
+        },
+        {
+          "perturbation": 0.2,
+          "ppl": 2927.2193768287816,
+          "ppl_change": 6.122177047290078,
+          "sensitivity": 30.61088523645039
+        },
+        {
+          "perturbation": 0.5,
+          "ppl": 198.1960073924006,
+          "ppl_change": -0.5177720310652151,
+          "sensitivity": -1.0355440621304302
+        }
+      ]
+    },
+    {
+      "parameter": "beta",
+      "avg_sensitivity": 6692.243183170845,
+      "results": [
+        {
+          "perturbation": -0.5,
+          "ppl": 1287.1033133304775,
+          "ppl_change": 2.131633299593838,
+          "sensitivity": -4.263266599187676
+        },
+        {
+          "perturbation": -0.2,
+          "ppl": 3892.2872391718447,
+          "ppl_change": 8.470270337688893,
+          "sensitivity": -42.35135168844446
+        },
+        {
+          "perturbation": -0.1,
+          "ppl": 78209.55174953288,
+          "ppl_change": 189.29058045961065,
+          "sensitivity": -1892.9058045961065
+        },
+        {
+          "perturbation": 0.1,
+          "ppl": 247.94184612066402,
+          "ppl_change": -0.3967361177362787,
+          "sensitivity": -3.967361177362787
+        },
+        {
+          "perturbation": 0.2,
+          "ppl": 3140720.3722343533,
+          "ppl_change": 7640.643371231431,
+          "sensitivity": 38203.21685615715
+        },
+        {
+          "perturbation": 0.5,
+          "ppl": 1799.044118309831,
+          "ppl_change": 3.377229403410702,
+          "sensitivity": 6.754458806821404
+        }
+      ]
+    },
+    {
+      "parameter": "D0",
+      "avg_sensitivity": 14.35384287259261,
+      "results": [
+        {
+          "perturbation": -0.5,
+          "ppl": 2126.0823138541496,
+          "ppl_change": 4.172941521310211,
+          "sensitivity": -8.345883042620422
+        },
+        {
+          "perturbation": -0.2,
+          "ppl": 19.677229866826185,
+          "ppl_change": -0.9521236037103626,
+          "sensitivity": 4.7606180185518125
+        },
+        {
+          "perturbation": -0.1,
+          "ppl": 36.862872028103034,
+          "ppl_change": -0.9103094550637421,
+          "sensitivity": 9.10309455063742
+        },
+        {
+          "perturbation": 0.1,
+          "ppl": 2255.430695650387,
+          "ppl_change": 4.487657283041505,
+          "sensitivity": 44.87657283041505
+        },
+        {
+          "perturbation": 0.2,
+          "ppl": 1943.7412253010514,
+          "ppl_change": 3.7292899364817167,
+          "sensitivity": 18.646449682408583
+        },
+        {
+          "perturbation": 0.5,
+          "ppl": 491.23601099496494,
+          "ppl_change": 0.19521955546118921,
+          "sensitivity": 0.39043911092237843
+        }
+      ]
+    },
+    {
+      "parameter": "g_coupling",
+      "avg_sensitivity": 27.601170673233668,
+      "results": [
+        {
+          "perturbation": -0.5,
+          "ppl": 85.94666346134831,
+          "ppl_change": -0.7908843598668949,
+          "sensitivity": 1.5817687197337897
+        },
+        {
+          "perturbation": -0.2,
+          "ppl": 2671.1953383076693,
+          "ppl_change": 5.499248494294156,
+          "sensitivity": -27.49624247147078
+        },
+        {
+          "perturbation": -0.1,
+          "ppl": 27.948676721031223,
+          "ppl_change": -0.931998460579915,
+          "sensitivity": 9.31998460579915
+        },
+        {
+          "perturbation": 0.1,
+          "ppl": 4994.443798147659,
+          "ppl_change": 11.151912242970974,
+          "sensitivity": 111.51912242970974
+        },
+        {
+          "perturbation": 0.2,
+          "ppl": 592.6555504124477,
+          "ppl_change": 0.44198203643672335,
+          "sensitivity": 2.2099101821836165
+        },
+        {
+          "perturbation": 0.5,
+          "ppl": 3181.144112394692,
+          "ppl_change": 6.739997815252463,
+          "sensitivity": 13.479995630504925
+        }
+      ]
+    }
+  ],
+  "status": "PARTIAL"
+}

@@ -1,0 +1,142 @@
+# HormonicFormer v6.1 - DCU训练配置
+# 修复: Laplacian核尺度 + CFL稳定性 + DA初始值 + STP重置
+# 适配国家算力网 PyTorch 2.7.1 + DTK 26.04
+
+name: "hormonic_v6.1_dcu_8L_512d"
+
+model:
+  d_model: 512
+  n_heads: 16
+  n_layers: 8
+  seq_len: 196
+  patch_size: 2
+  n_classes: 10
+  dropout: 0.1
+
+  # ═══════════════════════════════════════════════════
+  # v6.1 FIX: CGL参数数值稳定性
+  # 
+  # 原参数 (v6, 不稳定):
+  #   D0_amp=0.1, dt=0.05, n_steps=3
+  #   CFL = 0.05 * 0.1 * 9604 = 48.0 >> 2.0 → 爆炸
+  #
+  # 修复后 (v6.1, 稳定):
+  #   D0_amp=0.002, dt=0.02, n_steps=10
+  #   CFL = 0.02 * 0.002 * 9.87 = 0.0004 << 2.0 → 稳定
+  #
+  # 同时 Laplacian 核尺度修复 (v6.1):
+  #   原 λ_max = -(N/2)^2 = -9604
+  #   新 λ_max = -(π)^2 ≈ -9.87
+  #   
+  # 综合效果: CFL从48降到0.0004, 稳定性提升120000倍
+  # ═══════════════════════════════════════════════════
+  D0_amp: 0.002
+  D0_phase: 0.002
+  dt: 0.02
+  n_steps: 10
+  noise_scale: 0.001  # v6.1: 从0.005减小, 降低NaN概率
+  feedback_strength: 0.1
+
+train:
+  epochs: 50
+  batch_size: 256
+  accumulation_steps: 1
+
+  lr: 0.0005
+  weight_decay: 0.001
+  scheduler: cosine
+  warmup_epochs: 3
+  grad_clip: 1.0
+
+  dataset: fashion_mnist
+  data_root: ./data
+  noise_sigma: 0.3
+  num_workers: 8
+  pin_memory: true
+
+  seed: 42
+  use_amp: true
+  amp_exclude_ops: true
+  nan_guard: true
+  detect_anomaly: false
+
+  checkpoint_dir: ./checkpoints
+  log_dir: ./logs
+  save_interval: 1
+  log_interval: 50
+  max_stale_epochs: 10
+
+neuromod:
+  # ═══════════════════════════════════════════════════
+  # v6.1 FIX: DA初始值
+  # 
+  # 原值 (v6, 异常):
+  #   da_init=0.5, ema_alpha=0.05
+  #   → 初始surprise=(loss-0.5)/sqrt(0.1)≈7.4
+  #   → DA初始~0.9 (过度兴奋)
+  #
+  # 修复后 (v6.1, 中性):
+  #   da_init=2.5 (接近初始CE loss for 10类)
+  #   ema_alpha=0.9 (更快跟踪loss)
+  #   → 初始DA~0.5 (中性探索)
+  # ═══════════════════════════════════════════════════
+  da_init: 2.5
+  da_min: 0.1
+  da_max: 0.9
+  da_ema_alpha: 0.9
+  da_var_alpha: 0.9
+
+  use_cb: true
+  cb_gain: 2.0
+  cb_threshold: 0.25
+  tau_cb: 10.0
+
+  init_density: 0.3
+  target_sparsity: 0.70
+  sparsity_min: 0.65
+  sparsity_max: 0.75
+
+hebbian:
+  eta_potentiate: 0.001
+  eta_depress: 0.0005
+  sync_threshold: 0.3
+  decay: 0.999
+
+glial:
+  energy_budget: 1.0
+  energy_penalty: 0.1
+  energy_alpha: 0.9
+  energy_loss_weight: 0.01
+  calcium_diffusion: 0.01
+  calcium_interval: 3
+
+# v6 新增
+stp:
+  U: 0.2
+  tau_f: 1.0
+  tau_d: 3.0
+  dt: 0.05
+
+homeostatic:
+  target_rate: 0.5
+  eta: 0.001
+  ema_alpha: 0.99
+
+topdown:
+  n_feedback_iters: 1
+
+bwo:
+  use_bwo: true
+  pop_size: 20
+  eval_samples: 2000
+  evolve_interval: 5
+  flip_ratio: 0.02
+
+pc:
+  use_pc: true
+  pred_hidden_mult: 4
+  aux_weight: 0.01
+
+dist:
+  backend: nccl
+  find_unused_parameters: false

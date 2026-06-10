@@ -1,0 +1,40 @@
+======================================================================
+HormonicFormer v3 — 完整实验总览与核心结论
+整理时间: 2026-05-31 20:27
+======================================================================
+
+■ 论文定位
+----------------------------------------------------------------------
+Title: HormonicFormer: A Reaction-Diffusion Neural Field Model
+       with Hebbian Plasticity for Structured Sequence Learning
+
+核心主张: 不是 Transformer 替代品，而是生物启发序列建模新范式
+Target: Neural Networks / Neurocomputing / ICLR Workshop
+
+■ 四大核心贡献
+----------------------------------------------------------------------
+1. CGL反应项是核心机制 - 消融实验证明移除导致 -51.6% 性能崩塌
+2. Hebbian Warmup策略 - Char LM上PPL降低74% (6.67->1.73)
+3. Hebbian双面性 - 小数据利器，大数据毒药（首次实验验证）
+4. 纯CGL泛化稳定 - Val/Train PPL比仅1.18x (vs Hebbian的504x)
+
+■ 实验矩阵
+----------------------------------------------------------------------
+| 编号 | 实验 | 数据 | 状态 |
+|------|------|------|------|
+| A1 | Copy Task 长度泛化 | S=16/64/128/256 | Done |
+| A2 | Copy Task 消融 (8组) | S=64 | Done |
+| A3 | Transformer公平对决 | S=512 | Done |
+| B1 | Hebbian Char LM | 4350 chars | Done |
+| B2 | Hebbian Warmup | 4350 chars | Done |
+| C1 | WikiText-103 Hebbian | 118M tokens | Stopped(overfit) |
+| C2 | WikiText-103 Pure CGL | 118M tokens | Running |
+| C3 | WikiText-103 GPT-2基线 | 118M tokens | Pending |
+
+■ 关键发现时间线
+----------------------------------------------------------------------
+2026-05-28 16:37 - Hebbian Warmup突破: PPL 1.73, Acc 80.8%
+2026-05-29 11:32 - GPT-2对比: Hormonic速度4.3x, 显存省37%
+2026-05-30 18:08 - DCU K100_AI环境部署成功
+2026-05-31 16:14 - 发现Hebbian大数据过拟合 (Val PPL 504x Train)
+2026-05-31 20:14 - Pure CGL泛化验证: Val/Train仅1.18x

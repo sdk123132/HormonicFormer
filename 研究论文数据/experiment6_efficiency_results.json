@@ -1,0 +1,72 @@
+{
+  "hormonicformer": [
+    {
+      "seq_len": 128,
+      "time_ms": 14.36063289642334,
+      "tokens_per_sec": 71306.0494886014,
+      "peak_memory_gb": 0.1204376220703125
+    },
+    {
+      "seq_len": 256,
+      "time_ms": 29.053654670715332,
+      "tokens_per_sec": 70490.27130016398,
+      "peak_memory_gb": 0.1350860595703125
+    },
+    {
+      "seq_len": 512,
+      "time_ms": 61.372056007385254,
+      "tokens_per_sec": 66740.4722355579,
+      "peak_memory_gb": 0.1682891845703125
+    },
+    {
+      "seq_len": 1024,
+      "time_ms": 135.82331657409668,
+      "tokens_per_sec": 60313.65016426291,
+      "peak_memory_gb": 0.2298126220703125
+    }
+  ],
+  "transformer": [
+    {
+      "seq_len": 128,
+      "time_ms": 21.570863723754883,
+      "tokens_per_sec": 47471.44171479427,
+      "peak_memory_gb": 0.16838836669921875
+    },
+    {
+      "seq_len": 256,
+      "time_ms": 43.3316707611084,
+      "tokens_per_sec": 47263.351816984345,
+      "peak_memory_gb": 0.18401336669921875
+    },
+    {
+      "seq_len": 512,
+      "time_ms": 91.58497333526611,
+      "tokens_per_sec": 44723.49394049314,
+      "peak_memory_gb": 0.21526336669921875
+    },
+    {
+      "seq_len": 1024,
+      "time_ms": 197.7344512939453,
+      "tokens_per_sec": 41429.300490596106,
+      "peak_memory_gb": 0.27776336669921875
+    }
+  ],
+  "scaling_analysis": {
+    "hormonicformer": {
+      "exponent": 1.0803482048662003,
+      "status": "PASS",
+      "expected": "O(S)"
+    },
+    "transformer": {
+      "exponent": 1.0668914256846516,
+      "status": "INFO",
+      "expected": "O(S^2)"
+    },
+    "speedup": {
+      "128": 1.5020830822245532,
+      "256": 1.4914361464062078,
+      "512": 1.4922911059757418,
+      "1024": 1.4558211084918826
+    }
+  }
+}

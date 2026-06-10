@@ -1,0 +1,35 @@
+======================================================================
+首次训练日志：BS=32 (已终止, 重新启动)
+导出时间: 2026-05-31 09:20:43.882061
+======================================================================
+
+======================================================================
+HormonicFormer Paper Experiment — 3-Way WikiText-103
+======================================================================
+Device: cuda
+GPU: K100_AI
+VRAM: 68.7 GB
+
+Loading pre-tokenized WikiText-103...
+Total tokens: 118,496,733 (118.5M)
+Train: 117,996,733, Val: 500,000
+Vocab: 50257
+
+Config: seq_len=1024, BS=32, steps=20000, LR=0.0003
+
+██████████████████████████████████████████████████████████████████████
+RUN 1: Hormonic + Hebbian Warmup
+██████████████████████████████████████████████████████████████████████
+
+======================================================================
+Training: Hormonic+Hebbian
+Parameters: 107.1M
+======================================================================
+  Epoch 0: Hebbian LR = 0.0010
+  [Hormonic+Hebbian] Step     0: Loss=10.970 PPL=58127.2 LR=1.20e-06 25s VRAM=28.2GB
+  [Hormonic+Hebbian] Step   200: Loss=7.381 PPL=1605.8 LR=1.21e-04 795s VRAM=29.1GB
+  [Hormonic+Hebbian] Step   400: Loss=7.093 PPL=1203.7 LR=2.41e-04 1560s VRAM=29.1GB
+  [Hormonic+Hebbian] Step   600: Loss=6.968 PPL=1061.7 LR=3.00e-04 2319s VRAM=29.1GB
+  [Hormonic+Hebbian] Step   800: Loss=6.868 PPL=960.9 LR=3.00e-04 3085s VRAM=29.1GB
+  [Hormonic+Hebbian] Step  1000: Loss=6.793 PPL=891.4 LR=3.00e-04 3850s VRAM=29.1GB
+  [Hormonic+Hebbian] >>> Val Loss=8.908 Val PPL=7388.5 *BEST*

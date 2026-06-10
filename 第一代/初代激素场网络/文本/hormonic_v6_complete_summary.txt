@@ -1,0 +1,2526 @@
+﻿================================================================================
+HormonicFormer v4 (实际为 v6) - 完整代码与框架汇总
+================================================================================
+生成时间: 2026-05-25
+项目路径: C:\Users\MR\Desktop\hormonic_v4
+适配平台: 国家算力网 DCU (PyTorch 2.7.1 + DTK 26.04) / RTX 5070 本地
+
+================================================================================
+版本说明
+================================================================================
+
+虽然目录名为 hormonic_v4，实际代码已迭代到 v6 架构，包含 9 级时间尺度的
+完整生物神经机制。相比 v3/dcu_ready 版本，新增了：
+
+v4 改进 (34项修复):
+  - CGL向量化(消除for循环)、FieldAttention、位置编码、FFN、LayerNorm
+  - Dropout、checkpoint、早停、warmup、梯度裁剪、CSV日志
+  - DFT Laplacian向量化、register_buffer、任意维度支持
+
+v5 新增:
+  1. 局部 E/I 平衡 (侧抑制)
+  2. Hebbian/STDP 可塑性
+  3. 感觉反馈 (输入锚定)
+  4. 跨频耦合 (CFC)
+  5. 胶质细胞系统 (能量+钙波)
+
+v6 新增:
+  6. 树突计算 (Apical/Basal双通道 + 乘性门控)
+  7. 短时突触可塑性 STP (促进/抑制, Tsodyks-Markram)
+  8. 稳态可塑性 (目标活动率, 慢速增益调节)
+  9. Top-Down反馈回路 (高层→低层迭代精炼)
+
+时间尺度谱 (9级):
+  t~0.2   STP促进/抑制
+  t~1     CGL场演化 + E/I平衡 + 感觉反馈 + 跨频耦合 + 能量门控
+  t~5     Top-Down反馈迭代
+  t~10    Hebbian可塑性
+  t~30    钙波扩散
+  t~50    稳态可塑性
+  t~100   BWO剪枝+重生
+  t~1000  DA/CB神经调质
+
+================================================================================
+目录结构
+================================================================================
+
+hormonic_v4/
++-- ARCHITECTURE_v6.md       (10.22 KB) - 完整架构文档
++-- CHANGELOG.md              (4.51 KB) - 升级日志(34项修复)
++-- config.yaml               (2.29 KB) - 主配置文件(v6)
++-- launch.sh                 (2.38 KB) - 启动脚本
++-- test.sh                   (6.36 KB) - 测试脚本(9项测试)
++-- field/
+|   +-- laplacian_dft.py      (4.78 KB) - DFT Laplacian(向量化)
++-- models/
+|   +-- hormonicformer_v3.py (41.64 KB) - 完整模型(v6)
++-- scripts/
+    +-- train.py              (17.23 KB) - 训练脚本(v4改进)
+
+总代码量: ~89 KB
+
+
+================================================================================
+FILE: config.yaml
+================================================================================
+
+# HormonicFormer v6 - DCU训练配置
+# 适配国家算力网 PyTorch 2.7.1 + DTK 26.04
+
+name: "hormonic_v6_dcu_8L_512d"
+
+model:
+  d_model: 512
+  n_heads: 16
+  n_layers: 8
+  seq_len: 196
+  patch_size: 2
+  n_steps: 3
+  n_classes: 10
+  dropout: 0.1
+
+  D0_amp: 0.1
+  D0_phase: 0.05
+  dt: 0.05
+  noise_scale: 0.005
+  feedback_strength: 0.1
+
+train:
+  epochs: 50
+  batch_size: 256
+  accumulation_steps: 1
+
+  lr: 0.0005
+  weight_decay: 0.001
+  scheduler: cosine
+  warmup_epochs: 3
+  grad_clip: 1.0
+
+  dataset: fashion_mnist
+  data_root: ./data
+  noise_sigma: 0.3
+  num_workers: 8
+  pin_memory: true
+
+  seed: 42
+  use_amp: true
+  amp_exclude_ops: true
+  nan_guard: true
+  detect_anomaly: false
+
+  checkpoint_dir: ./checkpoints
+  log_dir: ./logs
+  save_interval: 1
+  log_interval: 50
+  max_stale_epochs: 10
+
+neuromod:
+  da_init: 0.5
+  da_min: 0.1
+  da_max: 0.9
+  da_ema_alpha: 0.05
+  da_var_alpha: 0.05
+
+  use_cb: true
+  cb_gain: 2.0
+  cb_threshold: 0.25
+  tau_cb: 10.0
+
+  init_density: 0.3
+  target_sparsity: 0.70
+  sparsity_min: 0.65
+  sparsity_max: 0.75
+
+hebbian:
+  eta_potentiate: 0.001
+  eta_depress: 0.0005
+  sync_threshold: 0.3
+  decay: 0.999
+
+glial:
+  energy_budget: 1.0
+  energy_penalty: 0.1
+  energy_alpha: 0.9
+  energy_loss_weight: 0.01
+  calcium_diffusion: 0.01
+  calcium_interval: 3
+
+# ────── v6 新增 ──────
+
+# [v6] 短时突触可塑性 (STP)
+stp:
+  U: 0.2                  # 基线释放概率 (Tsodyks-Markram U参数)
+  tau_f: 1.0               # 促进时间常数 (小→快速促进)
+  tau_d: 3.0               # 抑制时间常数 (大→慢速恢复)
+  dt: 0.05                 # 更新步长 (与CGL dt对齐)
+
+# [v6] 稳态可塑性 (Homeostatic Scaling)
+homeostatic:
+  target_rate: 0.5         # 目标活动率 (神经元试图维持的活动水平)
+  eta: 0.001               # 增益调整速率 (越小越慢, τ~50)
+  ema_alpha: 0.99          # 活动EMA平滑系数
+
+# [v6] Top-Down 反馈
+topdown:
+  n_feedback_iters: 1      # 反馈迭代次数 (1=最小开销, 2=更精细)
+  # 注意: 增加到2会使计算量约增加80%
+  # 推荐在显存充足时试 n_feedback_iters: 2
+
+bwo:
+  use_bwo: true
+  pop_size: 20
+  eval_samples: 2000
+  evolve_interval: 5
+  flip_ratio: 0.02
+
+pc:
+  use_pc: true
+  pred_hidden_mult: 4
+  aux_weight: 0.01
+
+dist:
+  backend: nccl
+  find_unused_parameters: false
+
+
+================================================================================
+FILE: launch.sh
+================================================================================
+
+#!/bin/bash
+# HormonicFormer v4 - DCU启动脚本
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}  HormonicFormer v4 - DCU Launcher${NC}"
+echo -e "${GREEN}========================================${NC}"
+
+# [1] 环境检查
+echo -e "\n${YELLOW}[1/5] 检查环境...${NC}"
+python3 --version
+python3 -c "import torch; print(f'PyTorch: {torch.__version__}')"
+
+if command -v rocm-smi &> /dev/null; then
+    echo -e "${GREEN}DCU detected:${NC}"
+    rocm-smi --showproductname --showmeminfo vram --showuse 2>/dev/null || true
+else
+    echo -e "${YELLOW}Warning: rocm-smi not found (CUDA mode)${NC}"
+fi
+
+NGPU=$(python3 -c "import torch; print(torch.cuda.device_count())")
+echo -e "${GREEN}GPUs available: $NGPU${NC}"
+
+# [2] 工作目录
+WORKDIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$WORKDIR"
+echo -e "\n${YELLOW}[2/5] Working dir: $WORKDIR${NC}"
+
+# [3] 必要目录
+mkdir -p checkpoints logs data
+echo -e "\n${YELLOW}[3/5] Directories ready${NC}"
+
+# [4] 快速验证
+echo -e "\n${YELLOW}[4/5] Quick validation...${NC}"
+python3 -c "
+import sys, torch
+sys.path.insert(0, 'field')
+from laplacian_dft import DFTLaplacian
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+lap = DFTLaplacian(196).to(device)
+x = torch.randn(2, 196, 32, device=device)
+y = lap(x)
+assert y.shape == x.shape, f'Shape mismatch: {y.shape} != {x.shape}'
+print('DFT Laplacian (vectorized): OK')
+"
+
+# [5] 训练
+echo -e "\n${YELLOW}[5/5] 启动训练...${NC}"
+
+RESUME_FLAG=""
+if [ -f "checkpoints/best.pt" ] && [ "${RESUME:-0}" = "1" ]; then
+    RESUME_FLAG="--resume checkpoints/best.pt"
+    echo -e "${GREEN}Resuming from checkpoint${NC}"
+fi
+
+LOGFILE="logs/train_$(date +%Y%m%d_%H%M%S).log"
+
+if [ "$NGPU" -gt 1 ]; then
+    echo -e "${GREEN}Using DDP with $NGPU GPUs${NC}"
+    torchrun \
+        --standalone \
+        --nnodes=1 \
+        --nproc_per_node=$NGPU \
+        scripts/train.py \
+        --config config.yaml \
+        $RESUME_FLAG \
+        2>&1 | tee "$LOGFILE"
+else
+    echo -e "${GREEN}Using single GPU${NC}"
+    python3 scripts/train.py \
+        --config config.yaml \
+        $RESUME_FLAG \
+        2>&1 | tee "$LOGFILE"
+fi
+
+echo -e "\n${GREEN}========================================${NC}"
+echo -e "${GREEN}  Training Complete!${NC}"
+echo -e "${GREEN}  Log: $LOGFILE${NC}"
+echo -e "${GREEN}========================================${NC}"
+
+
+================================================================================
+FILE: test.sh
+================================================================================
+
+#!/bin/bash
+# HormonicFormer v6 - 快速测试脚本
+
+set -e
+
+WORKDIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$WORKDIR"
+
+echo "=========================================="
+echo "  HormonicFormer v6 - Quick Test"
+echo "=========================================="
+
+# 1: 导入
+echo -e "\n[1/9] Testing imports..."
+python3 << 'EOF'
+import torch, yaml
+print(f"  PyTorch {torch.__version__}")
+print(f"  CUDA: {torch.cuda.is_available()}")
+if torch.cuda.is_available():
+    print(f"  Device: {torch.cuda.get_device_name(0)}")
+print("  PASS")
+EOF
+
+# 2: DFT Laplacian
+echo -e "\n[2/9] Testing DFT Laplacian..."
+python3 << 'EOF'
+import sys, torch
+sys.path.insert(0, 'field')
+from laplacian_dft import DFTLaplacian
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+lap = DFTLaplacian(196).to(device)
+x = torch.randn(4, 196, 64, device=device, requires_grad=True)
+y = lap(x)
+y.sum().backward()
+assert y.shape == x.shape and x.grad is not None
+print("  PASS")
+EOF
+
+# 3: 树突计算
+echo -e "\n[3/9] Testing Dendritic Computation..."
+python3 << 'EOF'
+import sys, torch
+sys.path.insert(0, 'models')
+from hormonicformer_v3 import DendriticCompartment
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+dend = DendriticCompartment(d_model=64).to(device)
+
+# 纯前馈模式 (无top-down)
+x_ff = torch.randn(2, 196, 64, device=device)
+out_ff = dend(x_ff, x_td=None)
+assert out_ff.shape == x_ff.shape
+
+# 带top-down反馈
+x_td = torch.randn(2, 196, 64, device=device)
+out_td = dend(x_ff, x_td=x_td)
+assert out_td.shape == x_ff.shape
+
+# 验证top-down确实改变了输出
+diff = (out_ff - out_td).abs().mean()
+assert diff > 0, "Top-down should change output"
+print(f"  FF vs TD diff: {diff:.4f}")
+print("  PASS")
+EOF
+
+# 4: STP
+echo -e "\n[4/9] Testing Short-Term Plasticity..."
+python3 << 'EOF'
+import sys, torch, yaml
+sys.path.insert(0, 'models')
+from hormonicformer_v3 import ShortTermPlasticity
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+with open('config.yaml') as f:
+    config = yaml.safe_load(f)
+
+stp = ShortTermPlasticity(seq_len=16, d_model=64, config=config).to(device)
+
+# 初始效能
+eff0 = stp.get_efficacy().clone()
+
+# 模拟高频刺激
+for _ in range(20):
+    activity = torch.ones(4, 16, device=device) * 2.0
+    stp.step(activity)
+
+eff_after = stp.get_efficacy()
+# 高频刺激应导致资源耗竭 (r↓), 效能最终下降
+print(f"  Initial efficacy: {eff0.mean():.3f}")
+print(f"  After 20 bursts:  {eff_after.mean():.3f}")
+
+# 恢复
+stp.reset()
+eff_reset = stp.get_efficacy()
+print(f"  After reset:      {eff_reset.mean():.3f}")
+assert abs(eff_reset.mean().item() - eff0.mean().item()) < 0.01
+print("  PASS")
+EOF
+
+# 5: 稳态可塑性
+echo -e "\n[5/9] Testing Homeostatic Plasticity..."
+python3 << 'EOF'
+import sys, torch, yaml
+sys.path.insert(0, 'models')
+from hormonicformer_v3 import HomeostaticPlasticity
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+with open('config.yaml') as f:
+    config = yaml.safe_load(f)
+
+hp = HomeostaticPlasticity(seq_len=16, config=config).to(device)
+
+# 模拟过度活跃 → 增益应下降
+for _ in range(100):
+    hp.update(torch.ones(4, 16, device=device) * 5.0)
+gain_high = hp.gain.mean().item()
+
+hp2 = HomeostaticPlasticity(seq_len=16, config=config).to(device)
+# 模拟沉默 → 增益应上升
+for _ in range(100):
+    hp2.update(torch.ones(4, 16, device=device) * 0.01)
+gain_low = hp2.gain.mean().item()
+
+print(f"  Gain after high activity: {gain_high:.3f} (should be <1)")
+print(f"  Gain after low activity:  {gain_low:.3f} (should be >1)")
+assert gain_high < 1.0 and gain_low > 1.0
+print("  PASS")
+EOF
+
+# 6: Top-Down投影
+echo -e "\n[6/9] Testing Top-Down Projection..."
+python3 << 'EOF'
+import sys, torch
+sys.path.insert(0, 'models')
+from hormonicformer_v3 import TopDownProjection
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+td = TopDownProjection(d_model=64, n_layers=4).to(device)
+h_upper = torch.randn(2, 196, 64, device=device)
+
+for target in range(3):
+    proj = td.project(h_upper, target_layer=target)
+    assert proj.shape == h_upper.shape
+    # Tanh输出应在[-1,1]
+    assert proj.min() >= -1.0 and proj.max() <= 1.0
+
+print("  PASS")
+EOF
+
+# 7: 完整前向
+echo -e "\n[7/9] Testing full model forward..."
+python3 << 'EOF'
+import sys, torch, yaml
+sys.path.insert(0, 'models')
+from hormonicformer_v3 import HormonicFormer
+with open('config.yaml') as f:
+    config = yaml.safe_load(f)
+config['model']['n_layers'] = 2
+config['model']['d_model'] = 64
+config['model']['n_heads'] = 4
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+model = HormonicFormer(config).to(device)
+dummy = torch.randn(2, 1, 28, 28, device=device)
+with torch.no_grad():
+    logits = model(dummy)
+assert logits.shape == (2, 10)
+print(f"  Output: {logits.shape}")
+print("  PASS")
+EOF
+
+# 8: 训练步骤
+echo -e "\n[8/9] Testing training step..."
+python3 << 'EOF'
+import sys, torch, yaml
+sys.path.insert(0, 'models')
+from hormonicformer_v3 import HormonicFormer
+with open('config.yaml') as f:
+    config = yaml.safe_load(f)
+config['model']['n_layers'] = 2
+config['model']['d_model'] = 64
+config['model']['n_heads'] = 4
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+model = HormonicFormer(config).to(device)
+opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+model.train()
+
+images = torch.randn(4, 1, 28, 28, device=device)
+targets = torch.randint(0, 10, (4,), device=device)
+logits, loss = model(images, targets)
+loss.backward()
+opt.step()
+
+assert not torch.isnan(loss)
+print(f"  Loss: {loss.item():.4f}")
+print("  PASS")
+EOF
+
+# 9: 完整诊断
+echo -e "\n[9/9] Testing diagnostics..."
+python3 << 'EOF'
+import sys, torch, yaml
+sys.path.insert(0, 'models')
+from hormonicformer_v3 import HormonicFormer
+with open('config.yaml') as f:
+    config = yaml.safe_load(f)
+config['model']['n_layers'] = 2
+config['model']['d_model'] = 64
+config['model']['n_heads'] = 4
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+model = HormonicFormer(config).to(device)
+diag = model.get_diagnostics()
+
+required_keys = ['DA', 'G_sparsity', 'stp_u_mean', 'stp_r_mean',
+                 'stp_efficacy_mean', 'homeo_gain_mean', 'homeo_gain_std',
+                 'energy_mean', 'alive_ratio']
+for k in required_keys:
+    assert k in diag, f"Missing key: {k}"
+
+print("  Diagnostics:")
+for k, v in diag.items():
+    print(f"    {k}: {v}")
+print("  PASS")
+EOF
+
+echo -e "\n=========================================="
+echo "  All 9 tests PASSED!"
+echo "=========================================="
+echo ""
+echo "Ready to train: bash launch.sh"
+
+
+================================================================================
+FILE: field\laplacian_dft.py
+================================================================================
+
+"""
+DFT-based Laplacian for DCU (HIP-compatible)
+v4: 修复设备管理, 支持批量多特征向量化计算
+"""
+import torch
+import torch.nn as nn
+import numpy as np
+
+
+class DFTLaplacian(nn.Module):
+    """
+    DFT矩阵实现的Laplacian算子
+    完全兼容DCU (无需torch.fft)
+
+    v4改进:
+    - 移除冗余device属性, 完全依赖.to(device)
+    - 支持任意维度输入的向量化计算 (无需for循环)
+    """
+    def __init__(self, seq_len: int):
+        super().__init__()
+        self.seq_len = seq_len
+        self._init_dft_matrix()
+
+    def _init_dft_matrix(self):
+        """初始化DFT/IDFT矩阵和频域核"""
+        N = self.seq_len
+        n = torch.arange(N, dtype=torch.float32)
+        k = torch.arange(N, dtype=torch.float32).view(-1, 1)
+
+        # DFT矩阵: W[k,n] = exp(-2*pi*i * k * n / N)
+        theta = -2 * np.pi * k * n / N
+        self.register_buffer('W_real', torch.cos(theta))
+        self.register_buffer('W_imag', torch.sin(theta))
+
+        # IDFT矩阵: W_inv = W^H / N
+        self.register_buffer('W_inv_real', torch.cos(theta).T / N)
+        self.register_buffer('W_inv_imag', torch.sin(theta).T / N)  # 注意: -sin的转置
+
+        # 频域Laplacian核: -|k|^2  (循环对称)
+        k_freq = torch.arange(N, dtype=torch.float32)
+        k_freq = torch.minimum(k_freq, N - k_freq)
+        self.register_buffer('lap_kernel', -(k_freq ** 2))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        计算 nabla^2 x (频域Laplacian)
+
+        x: 任意形状, 最后一维为seq_len
+           例: [B, seq], [B, seq, D], [B, H, seq, D] 等
+        返回: 与输入同形状
+        """
+        orig_shape = x.shape
+        assert x.shape[-1] == self.seq_len or x.shape[-2] == self.seq_len, \
+            f"Input last or second-to-last dim must be {self.seq_len}, got shape {orig_shape}"
+
+        # 自动判断seq维度位置
+        # 约定: seq维度在倒数第二维 (标准Transformer布局)
+        # 如果只有2维 [B, seq], 则seq在最后一维
+        if x.dim() == 2:
+            # [B, seq] -> 直接在最后一维操作
+            return self._apply_laplacian(x)
+        else:
+            # [..., seq, D] -> 需要转置到最后一维操作
+            # 将seq移到最后: [..., D, seq]
+            x_t = x.transpose(-2, -1)
+            # 展平前面所有维度: [N, seq]
+            flat = x_t.reshape(-1, self.seq_len)
+            result_flat = self._apply_laplacian(flat)
+            # 恢复形状并转置回来
+            result = result_flat.reshape(x_t.shape).transpose(-2, -1)
+            return result
+
+    def _apply_laplacian(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        对 [N, seq_len] 张量应用频域Laplacian
+        完全向量化, 无循环
+        """
+        # 正变换: X = x @ W^T
+        X_real = torch.matmul(x, self.W_real.T)
+        X_imag = torch.matmul(x, self.W_imag.T)
+
+        # 频域乘以Laplacian核
+        X_real_lap = X_real * self.lap_kernel
+        X_imag_lap = X_imag * self.lap_kernel
+
+        # 逆变换 (只取实部)
+        x_lap = torch.matmul(X_real_lap, self.W_inv_real.T) - \
+                torch.matmul(X_imag_lap, self.W_inv_imag.T)
+
+        return x_lap
+
+
+class FiniteDiffLaplacian(nn.Module):
+    """有限差分Laplacian (备用方案, 无需DFT矩阵)"""
+    def __init__(self, seq_len: int):
+        super().__init__()
+        self.seq_len = seq_len
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """计算 nabla^2 x ≈ x[i+1] - 2*x[i] + x[i-1] (周期边界)"""
+        x_plus = torch.roll(x, shifts=-1, dims=-2 if x.dim() > 2 else -1)
+        x_minus = torch.roll(x, shifts=1, dims=-2 if x.dim() > 2 else -1)
+        return x_plus - 2 * x + x_minus
+
+
+def test_dft_laplacian():
+    """测试DFT Laplacian"""
+    print("=" * 60)
+    print("DFT Laplacian Test (v4)")
+    print("=" * 60)
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Device: {device}")
+
+    seq_len = 196
+    batch = 4
+    d_feat = 32
+
+    lap = DFTLaplacian(seq_len).to(device)
+
+    # 测试1: [B, seq]
+    x1 = torch.sin(torch.linspace(0, 2 * np.pi, seq_len)).unsqueeze(0).repeat(batch, 1).to(device)
+    y1 = lap(x1)
+    print(f"\n[Test 1] Input: {x1.shape} -> Output: {y1.shape}")
+
+    # 测试2: [B, seq, D] - 向量化
+    x2 = torch.randn(batch, seq_len, d_feat, device=device)
+    y2 = lap(x2)
+    print(f"[Test 2] Input: {x2.shape} -> Output: {y2.shape}")
+    assert y2.shape == x2.shape, "Shape mismatch!"
+
+    # 测试3: 梯度
+    x3 = torch.randn(batch, seq_len, d_feat, device=device, requires_grad=True)
+    y3 = lap(x3)
+    loss = y3.sum()
+    loss.backward()
+    assert x3.grad is not None, "No gradient!"
+    print(f"[Test 3] Gradient check: PASSED")
+
+    print("\n" + "=" * 60)
+    print("All tests PASSED!")
+    print("=" * 60)
+
+
+if __name__ == '__main__':
+    test_dft_laplacian()
+
+
+================================================================================
+FILE: models\hormonicformer_v3.py
+================================================================================
+
+"""
+HormonicFormer v6 - 完整生物神经机制
+兼容 PyTorch 2.7.1 + ROCm/HIP (DCU Ready)
+
+v6 新增 (在v5基础上):
+  6. 树突计算 (Dendritic Computation) - apical/basal双通道, 非线性胞体整合
+  7. 短时突触可塑性 (STP) - 促进/抑制资源动态, τ~1-5
+  8. 稳态可塑性 (Homeostatic Scaling) - 目标活动率自适应增益, τ~50
+  9. Top-Down反馈回路 - 高层→低层反馈迭代, apical驱动
+
+v5 保留:
+  1. 局部 E/I 平衡    2. Hebbian/STDP    3. 感觉反馈
+  4. 跨频耦合          5. 胶质细胞        + DA/CB/BWO/PC
+
+时间尺度谱:
+  τ~0.2  STP促进/抑制 (每CGL sub-step)
+  τ~1    CGL场演化 + E/I平衡 + 感觉反馈 + 跨频耦合
+  τ~1    能量门控 (EMA)
+  τ~5    Top-Down反馈迭代 (每forward 1-2轮)
+  τ~10   Hebbian可塑性 (每batch)
+  τ~30   钙波扩散
+  τ~50   稳态可塑性 (慢速增益调整)
+  τ~100  BWO剪枝+重生
+  τ~1000 DA/CB神经调质
+"""
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / 'field'))
+from laplacian_dft import DFTLaplacian, FiniteDiffLaplacian
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 位置编码
+# ═══════════════════════════════════════════════════════════════════════════
+class SinusoidalPositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, max_len: int = 512):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float32).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2, dtype=torch.float32)
+            * (-math.log(10000.0) / d_model)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe.unsqueeze(0))
+
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1), :]
+
+
+class LearnablePositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, max_len: int = 512):
+        super().__init__()
+        self.pe = nn.Parameter(torch.randn(1, max_len, d_model) * 0.02)
+
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1), :]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# [v5-1] 局部 E/I 平衡器
+# ═══════════════════════════════════════════════════════════════════════════
+class LocalEIBalance(nn.Module):
+    """
+    局部兴奋/抑制平衡 (Lateral Inhibition)
+    侧抑制防止单token主导全局, 提高表征多样性.
+    """
+    def __init__(self, d_model: int, seq_len: int, n_heads: int):
+        super().__init__()
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+        self.gamma_E = nn.Parameter(torch.ones(n_heads) * 1.0)
+        self.gamma_I = nn.Parameter(torch.ones(n_heads) * 0.5)
+        self.kappa = nn.Parameter(torch.ones(n_heads) * 0.3)
+        self.lateral_pool = nn.AvgPool1d(kernel_size=5, stride=1, padding=2)
+
+    def forward(self, re, im):
+        B, S, D = re.shape
+        H, Dh = self.n_heads, self.d_head
+        re_h = re.view(B, S, H, Dh)
+        im_h = im.view(B, S, H, Dh)
+        amp_sq_h = (re_h.pow(2) + im_h.pow(2)).mean(dim=-1)
+        self_inh = self.gamma_I.view(1, 1, H) * amp_sq_h
+        amp_for_pool = amp_sq_h.permute(0, 2, 1).reshape(B * H, 1, S)
+        neighbor_amp = self.lateral_pool(amp_for_pool).reshape(B, H, S).permute(0, 2, 1)
+        lateral_inh = self.kappa.view(1, 1, H) * neighbor_amp
+        excitation = self.gamma_E.view(1, 1, H)
+        net_mod = (excitation - self_inh - lateral_inh).unsqueeze(-1)
+        d_re = (net_mod * re_h).reshape(B, S, D)
+        d_im = (net_mod * im_h).reshape(B, S, D)
+        return d_re, d_im
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# [v5-2] Hebbian/STDP 突触可塑性
+# ═══════════════════════════════════════════════════════════════════════════
+class HebbianPlasticity(nn.Module):
+    def __init__(self, seq_len: int, config: dict):
+        super().__init__()
+        hebb_cfg = config.get('hebbian', {})
+        self.eta_potentiate = hebb_cfg.get('eta_potentiate', 0.001)
+        self.eta_depress = hebb_cfg.get('eta_depress', 0.0005)
+        self.sync_threshold = hebb_cfg.get('sync_threshold', 0.3)
+        self.decay = hebb_cfg.get('decay', 0.999)
+
+    @torch.no_grad()
+    def update(self, G, alive_mask, phase):
+        theta = phase.mean(dim=0)
+        phase_diff = theta.unsqueeze(1) - theta.unsqueeze(0)
+        sync = torch.cos(phase_diff)
+        potentiation = F.relu(sync - self.sync_threshold) * self.eta_potentiate
+        depression = F.relu(self.sync_threshold - sync) * self.eta_depress
+        delta_G = (potentiation - depression) * alive_mask
+        G_new = G * self.decay + delta_G
+        return torch.clamp(G_new, -1.0, 1.0)
+
+    def compute_sync_metric(self, phase):
+        theta = phase.mean(dim=0)
+        z = torch.complex(torch.cos(theta), torch.sin(theta))
+        return z.mean().abs().item()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# [v5-5] 胶质细胞系统
+# ═══════════════════════════════════════════════════════════════════════════
+class GlialSystem(nn.Module):
+    def __init__(self, seq_len: int, d_model: int, config: dict):
+        super().__init__()
+        g = config.get('glial', {})
+        self.energy_budget = g.get('energy_budget', 1.0)
+        self.energy_penalty = g.get('energy_penalty', 0.1)
+        self.register_buffer('energy_ema', torch.ones(seq_len) * 0.5)
+        self.energy_alpha = g.get('energy_alpha', 0.9)
+        self.calcium_diffusion = g.get('calcium_diffusion', 0.01)
+        self.calcium_interval = g.get('calcium_interval', 3)
+
+    @torch.no_grad()
+    def compute_energy_gate(self, amp_sq):
+        current_energy = amp_sq.mean(dim=0)
+        self.energy_ema.copy_(
+            self.energy_alpha * self.energy_ema + (1 - self.energy_alpha) * current_energy
+        )
+        return torch.sigmoid(
+            (self.energy_budget - self.energy_ema) / (self.energy_penalty + 1e-8)
+        )
+
+    @torch.no_grad()
+    def calcium_wave(self, G):
+        d = self.calcium_diffusion
+        G_row = (1 - 2 * d) * G + d * torch.roll(G, 1, 0) + d * torch.roll(G, -1, 0)
+        return (1 - 2 * d) * G_row + d * torch.roll(G_row, 1, 1) + d * torch.roll(G_row, -1, 1)
+
+    def energy_loss(self, amp_sq):
+        return F.relu(amp_sq - self.energy_budget).mean() * self.energy_penalty
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# [v5-4] 跨频耦合
+# ═══════════════════════════════════════════════════════════════════════════
+class CrossFrequencyCoupling(nn.Module):
+    def __init__(self, d_model: int, n_layers: int):
+        super().__init__()
+        self.coupling_alpha = nn.Parameter(torch.ones(max(n_layers - 1, 1)) * 0.1)
+
+    def apply_coupling(self, re, im, prev_phase, layer_idx):
+        if prev_phase is None or layer_idx == 0:
+            return re, im
+        alpha = self.coupling_alpha[min(layer_idx - 1, len(self.coupling_alpha) - 1)]
+        curr_phase = torch.atan2(im.mean(dim=-1), re.mean(dim=-1))
+        modulation = (1.0 + alpha * torch.cos(prev_phase - curr_phase)).unsqueeze(-1)
+        return re * modulation, im * modulation
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# [v6-6] 树突计算 (Dendritic Computation)
+# ═══════════════════════════════════════════════════════════════════════════
+class DendriticCompartment(nn.Module):
+    """
+    树突双通道计算 (Apical-Basal Dendritic Model)
+
+    生物原理:
+      真实神经元不是点模型 — 树突本身做大量局部计算.
+      - 基底树突 (Basal): 接收前馈输入 (来自下层)
+      - 顶端树突 (Apical): 接收反馈/上下文输入 (来自上层)
+      - 胞体 (Soma): 非线性整合两路信号
+
+    数学:
+      basal  = σ(W_b · x_ff)              前馈通道
+      apical = σ(W_a · x_td)              反馈通道 (top-down)
+      soma   = basal * (1 + λ · apical)   乘性门控整合
+
+    当 apical ≈ 0 (无反馈) → soma ≈ basal (纯前馈)
+    当 apical > 0 → 放大与上下文一致的前馈信号
+    当 apical < 0 → 抑制与上下文不一致的信号
+
+    这实现了 "context-dependent gain modulation" — 上下文不改变
+    信号内容, 而是改变信号增益.
+    """
+    def __init__(self, d_model: int, dropout: float = 0.1):
+        super().__init__()
+        self.d_model = d_model
+
+        # 基底树突: 前馈输入处理
+        self.W_basal = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+        )
+
+        # 顶端树突: 反馈/上下文输入处理
+        self.W_apical = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.Tanh(),   # tanh: 允许抑制 (负值)
+        )
+
+        # 胞体整合增益
+        self.soma_lambda = nn.Parameter(torch.tensor(0.5))
+
+        # 输出投影
+        self.W_soma = nn.Linear(d_model, d_model)
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x_ff: torch.Tensor,
+                x_td: torch.Tensor = None) -> torch.Tensor:
+        """
+        x_ff: [B, S, D] 前馈输入 (basal)
+        x_td: [B, S, D] Top-down反馈 (apical), None = 纯前馈模式
+
+        返回: [B, S, D] 胞体输出
+        """
+        basal = self.W_basal(x_ff)    # [B, S, D]
+
+        if x_td is not None:
+            apical = self.W_apical(x_td)  # [B, S, D] ∈ (-1, 1)
+            # 乘性门控: 上下文调制前馈信号的增益
+            soma = basal * (1.0 + self.soma_lambda * apical)
+        else:
+            soma = basal
+
+        return self.drop(self.W_soma(soma))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# [v6-7] 短时突触可塑性 (Short-Term Plasticity, STP)
+# ═══════════════════════════════════════════════════════════════════════════
+class ShortTermPlasticity(nn.Module):
+    """
+    短时突触可塑性: 促进 (Facilitation) + 抑制 (Depression)
+
+    生物原理:
+      突触传递效能不是恒定的 — 取决于近期使用历史.
+      - 促进: 快速连续激活 → 残余Ca²⁺累积 → 释放概率↑
+      - 抑制: 突触囊泡资源耗竭 → 释放量↓
+
+    数学 (Tsodyks-Markram模型简化):
+      u(t+1) = u(t) + dt/τ_f · (U - u(t)) + U · (1-u(t)) · spike
+      r(t+1) = r(t) + dt/τ_d · (1 - r(t)) - u(t) · r(t) · spike
+
+      有效突触权重 = w · u · r
+
+      u: 利用参数 (facilitation, 用后升高, 自然恢复到U)
+      r: 资源参数 (depression, 用后降低, 自然恢复到1)
+
+    时间尺度: τ_f ~ 0.5-2, τ_d ~ 1-5 (比Hebbian τ~10快)
+    """
+    def __init__(self, seq_len: int, d_model: int, config: dict):
+        super().__init__()
+        stp_cfg = config.get('stp', {})
+
+        self.U = stp_cfg.get('U', 0.2)          # 基线利用率
+        self.tau_f = stp_cfg.get('tau_f', 1.0)   # 促进时间常数
+        self.tau_d = stp_cfg.get('tau_d', 3.0)   # 抑制时间常数
+        self.dt = stp_cfg.get('dt', 0.05)
+
+        # 每个token位置的状态 (不可训练, 推理时自动演化)
+        self.register_buffer('u', torch.ones(seq_len) * self.U)   # 利用率
+        self.register_buffer('r', torch.ones(seq_len))             # 资源量
+
+    @torch.no_grad()
+    def step(self, activity: torch.Tensor):
+        """
+        基于当前活动更新STP状态
+
+        activity: [B, S] 每个token的活动量 (标量, 如|ψ|²)
+        """
+        # batch平均活动作为"spike"信号
+        spike = activity.mean(dim=0)  # [S]
+        # 归一化到 [0, 1]
+        spike = torch.clamp(spike / (spike.max() + 1e-8), 0, 1)
+
+        # 促进更新: 恢复到U + spike引起的Ca²⁺累积
+        du = self.dt / self.tau_f * (self.U - self.u) + self.U * (1 - self.u) * spike
+        self.u.add_(du)
+        self.u.clamp_(0.01, 0.99)
+
+        # 抑制更新: 恢复到1 - spike引起的资源消耗
+        dr = self.dt / self.tau_d * (1.0 - self.r) - self.u * self.r * spike
+        self.r.add_(dr)
+        self.r.clamp_(0.01, 1.0)
+
+    def get_efficacy(self) -> torch.Tensor:
+        """
+        获取当前突触效能: u * r
+
+        高频使用 → u↑ (促进) 但 r↓ (抑制)
+        → 短暂促进后转为抑制 (典型STP动力学)
+
+        返回: [S] ∈ (0, 1)
+        """
+        return self.u * self.r
+
+    @torch.no_grad()
+    def reset(self):
+        """重置到基线状态"""
+        self.u.fill_(self.U)
+        self.r.fill_(1.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# [v6-8] 稳态可塑性 (Homeostatic Plasticity / Synaptic Scaling)
+# ═══════════════════════════════════════════════════════════════════════════
+class HomeostaticPlasticity(nn.Module):
+    """
+    稳态可塑性 / 突触缩放 (Synaptic Scaling)
+
+    生物原理:
+      神经元维持一个"目标活动率". 当实际活动偏离目标时:
+      - 活动过高 → 全局缩小所有突触权重 (下调增益)
+      - 活动过低 → 全局放大所有突触权重 (上调增益)
+
+    与E/I平衡的区别:
+      - E/I平衡: 快速, 局部, 基于当前活动的侧抑制
+      - 稳态可塑性: 慢速, 自体, 基于长期活动历史的增益调节
+
+    数学:
+      gain_s = gain_s + η_h · (target - EMA(activity_s))
+      output_s = input_s * gain_s
+
+    时间尺度: τ~50 (最慢的可塑性之一, 仅次于BWO)
+    """
+    def __init__(self, seq_len: int, config: dict):
+        super().__init__()
+        h_cfg = config.get('homeostatic', {})
+
+        self.target_rate = h_cfg.get('target_rate', 0.5)     # 目标活动率
+        self.eta = h_cfg.get('eta', 0.001)                    # 调整速率
+        self.ema_alpha = h_cfg.get('ema_alpha', 0.99)         # EMA平滑
+
+        # 每个token位置独立
+        self.register_buffer('activity_ema', torch.ones(seq_len) * self.target_rate)
+        self.register_buffer('gain', torch.ones(seq_len))     # 增益因子
+
+    @torch.no_grad()
+    def update(self, activity: torch.Tensor):
+        """
+        基于活动更新增益
+
+        activity: [B, S] 每个token的活动量
+        """
+        current = activity.mean(dim=0)  # [S]
+
+        # 更新活动EMA
+        self.activity_ema.copy_(
+            self.ema_alpha * self.activity_ema + (1 - self.ema_alpha) * current
+        )
+
+        # 调整增益: 活动高于目标 → 降增益, 低于目标 → 升增益
+        error = self.target_rate - self.activity_ema
+        self.gain.add_(self.eta * error)
+
+        # 限制增益范围 (防止发散)
+        self.gain.clamp_(0.1, 3.0)
+
+    def apply_gain(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        对信号施加稳态增益
+
+        x: [B, S, D]
+        """
+        return x * self.gain.unsqueeze(0).unsqueeze(-1)  # [1, S, 1]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 多头场注意力
+# ═══════════════════════════════════════════════════════════════════════════
+class FieldAttention(nn.Module):
+    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1):
+        super().__init__()
+        assert d_model % n_heads == 0
+        self.n_heads, self.d_head = n_heads, d_model // n_heads
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+        self.attn_drop = nn.Dropout(dropout)
+        self.scale = math.sqrt(self.d_head)
+
+    def forward(self, x, field_mod=None, stp_efficacy=None):
+        """
+        stp_efficacy: [S] 短时可塑性效能, 调制attention值
+        """
+        B, S, D = x.shape
+        H, Dh = self.n_heads, self.d_head
+        q = self.W_q(x).view(B, S, H, Dh).transpose(1, 2)
+        k = self.W_k(x).view(B, S, H, Dh).transpose(1, 2)
+        v = self.W_v(x).view(B, S, H, Dh).transpose(1, 2)
+        attn = torch.matmul(q, k.transpose(-2, -1)) / self.scale
+        if field_mod is not None:
+            attn = attn + field_mod.unsqueeze(1).unsqueeze(2) * 0.5
+        attn = F.softmax(attn, dim=-1)
+        attn = self.attn_drop(attn)
+
+        # [v6] STP调制attention后的value
+        if stp_efficacy is not None:
+            # stp_efficacy: [S] -> [1, 1, S, 1] 调制value的key端
+            v = v * stp_efficacy.unsqueeze(0).unsqueeze(0).unsqueeze(-1)
+
+        out = torch.matmul(attn, v).transpose(1, 2).contiguous().view(B, S, D)
+        return self.W_o(out)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CGL 场动力学块 (v6: + 树突 + STP + 稳态 + Top-Down)
+# ═══════════════════════════════════════════════════════════════════════════
+class HormonicBlock(nn.Module):
+    """
+    HormonicFormer核心块
+
+    v6新增:
+    - 树突计算 (apical/basal, 在残差连接处整合top-down)
+    - STP调制attention (促进/抑制)
+    - 稳态增益应用 (CGL输出后)
+    """
+    def __init__(self, d_model: int, n_heads: int, seq_len: int,
+                 n_steps: int = 3, D0_amp: float = 0.1, D0_phase: float = 0.05,
+                 dt: float = 0.05, noise_scale: float = 0.005,
+                 dropout: float = 0.1, use_dft: bool = True,
+                 feedback_strength: float = 0.1):
+        super().__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.seq_len = seq_len
+        self.n_steps = n_steps
+        self.D0_amp = D0_amp
+        self.D0_phase = D0_phase
+        self.dt = dt
+        self.noise_scale = noise_scale
+        self.feedback_strength = feedback_strength
+
+        # Laplacian
+        self.laplacian = DFTLaplacian(seq_len) if use_dft else FiniteDiffLaplacian(seq_len)
+
+        # 线性投影
+        self.W_in = nn.Linear(d_model, d_model * 2)
+        self.W_out = nn.Linear(d_model * 2, d_model)
+        self.W_feedback = nn.Linear(d_model, d_model * 2)
+
+        # CGL参数
+        self.alpha = nn.Parameter(torch.tensor(1.0))
+        self.beta = nn.Parameter(torch.tensor(0.5))
+
+        # E/I平衡
+        self.ei_balance = LocalEIBalance(d_model, seq_len, n_heads)
+
+        # [v6] 树突计算
+        self.dendrite = DendriticCompartment(d_model, dropout)
+
+        # 多头场注意力
+        self.field_attn = FieldAttention(d_model, n_heads, dropout)
+
+        # 层归一化
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+
+        # FFN
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_model * 4), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(d_model * 4, d_model), nn.Dropout(dropout),
+        )
+
+    def forward(self, x, x_input, DA=0.5, CB=0.0, G_mask=None,
+                energy_gate=None, prev_phase=None,
+                cfc=None, layer_idx=0,
+                stp_efficacy=None, top_down=None):
+        """
+        新增参数:
+          stp_efficacy: [S] STP突触效能
+          top_down: [B, S, D] 来自高层的反馈信号
+        """
+        B, S, D = x.shape
+
+        # --- CGL场演化 ---
+        psi = self.W_in(self.norm1(x)).reshape(B, S, self.d_model, 2)
+        feedback = self.W_feedback(x_input).reshape(B, S, self.d_model, 2) * self.feedback_strength
+
+        for step in range(self.n_steps):
+            psi = self._cgl_step(psi, feedback, DA, CB, G_mask,
+                                 energy_gate, prev_phase, cfc, layer_idx)
+
+        re, im = psi[..., 0], psi[..., 1]
+        field_amp = torch.sqrt(re.pow(2).mean(-1) + im.pow(2).mean(-1) + 1e-8)
+        phase = torch.atan2(im.mean(-1), re.mean(-1))
+
+        cgl_out = self.W_out(psi.reshape(B, S, self.d_model * 2))
+
+        # [v6] 树突整合: basal=CGL前馈, apical=Top-Down反馈
+        cgl_out = self.dendrite(cgl_out, x_td=top_down)
+
+        # 残差
+        x = x + cgl_out
+
+        # 场注意力 (v6: STP调制)
+        attn_out = self.field_attn(self.norm2(x), field_mod=field_amp,
+                                   stp_efficacy=stp_efficacy)
+        x = x + attn_out
+
+        # FFN
+        x = x + self.ffn(self.norm3(x))
+
+        return x, field_amp, phase
+
+    def _cgl_step(self, psi, feedback, DA, CB, G_mask,
+                  energy_gate, prev_phase, cfc, layer_idx):
+        re, im = psi[..., 0], psi[..., 1]
+
+        # 半步: 非线性 + E/I
+        amp_sq = re.pow(2) + im.pow(2)
+        alpha_eff = self.alpha * (0.5 + DA)
+        d_re = (alpha_eff * amp_sq - amp_sq.pow(2)) * re - self.beta * amp_sq * im
+        d_im = (alpha_eff * amp_sq - amp_sq.pow(2)) * im + self.beta * amp_sq * re
+        ei_re, ei_im = self.ei_balance(re, im)
+        d_re, d_im = d_re + ei_re, d_im + ei_im
+        re_half = re + 0.5 * self.dt * d_re
+        im_half = im + 0.5 * self.dt * d_im
+
+        # 整步: 扩散
+        lap_re = self.laplacian(re_half)
+        lap_im = self.laplacian(im_half)
+        D_amp_eff = self.D0_amp * (1.0 - CB)
+        D_phase_eff = self.D0_phase * (1.0 - CB)
+        re_full = re_half + self.dt * D_amp_eff * lap_re
+        im_full = im_half + self.dt * D_phase_eff * lap_im
+
+        # G_mask调制
+        if G_mask is not None:
+            g_diag = G_mask.diag().unsqueeze(0).unsqueeze(-1)
+            re_full = re_full * (1.0 + 0.1 * g_diag)
+            im_full = im_full * (1.0 + 0.1 * g_diag)
+
+        # 感觉反馈
+        re_full = re_full + feedback[..., 0]
+        im_full = im_full + feedback[..., 1]
+
+        # 能量门控
+        if energy_gate is not None:
+            gate = energy_gate.unsqueeze(0).unsqueeze(-1)
+            re_full, im_full = re_full * gate, im_full * gate
+
+        # 跨频耦合
+        if cfc is not None and prev_phase is not None:
+            re_full, im_full = cfc.apply_coupling(re_full, im_full, prev_phase, layer_idx)
+
+        # 噪声
+        if self.training and self.noise_scale > 0:
+            ns = self.noise_scale * math.sqrt(self.dt)
+            re_full = re_full + torch.randn_like(re_full) * ns
+            im_full = im_full + torch.randn_like(im_full) * ns
+
+        # 半步: 非线性 + E/I
+        amp_sq2 = re_full.pow(2) + im_full.pow(2)
+        d_re2 = (alpha_eff * amp_sq2 - amp_sq2.pow(2)) * re_full - self.beta * amp_sq2 * im_full
+        d_im2 = (alpha_eff * amp_sq2 - amp_sq2.pow(2)) * im_full + self.beta * amp_sq2 * re_full
+        ei_re2, ei_im2 = self.ei_balance(re_full, im_full)
+        d_re2, d_im2 = d_re2 + ei_re2, d_im2 + ei_im2
+        re_next = re_full + 0.5 * self.dt * d_re2
+        im_next = im_full + 0.5 * self.dt * d_im2
+
+        return torch.stack([re_next, im_next], dim=-1)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# [v6-9] Top-Down 反馈投影
+# ═══════════════════════════════════════════════════════════════════════════
+class TopDownProjection(nn.Module):
+    """
+    Top-Down反馈投影 (逐层)
+
+    生物原理:
+      皮层中前馈连接 (L4→L2/3) 和反馈连接 (L5/6→L1/apical) 数量相当.
+      反馈连接不是简单拷贝 — 它经过独立投影, 携带预测/上下文信息.
+      反馈到达apical dendrite, 不直接驱动胞体,
+      而是调制前馈信号的增益 (context-dependent modulation).
+
+    实现:
+      每对(layer_i+1 → layer_i)有独立的线性投影.
+      feedback_i = W_td[i] · LayerNorm(h_{i+1})
+    """
+    def __init__(self, d_model: int, n_layers: int, dropout: float = 0.1):
+        super().__init__()
+        self.n_layers = n_layers
+        # n_layers-1 个投影: layer L+1 → layer L
+        self.projections = nn.ModuleList([
+            nn.Sequential(
+                nn.LayerNorm(d_model),
+                nn.Linear(d_model, d_model),
+                nn.Tanh(),
+                nn.Dropout(dropout),
+            )
+            for _ in range(n_layers - 1)
+        ])
+
+    def project(self, h_upper: torch.Tensor, target_layer: int) -> torch.Tensor:
+        """
+        将高层表征投影为低层的top-down信号
+
+        h_upper: [B, S, D] 高层的表征
+        target_layer: 目标层索引 (0 ~ n_layers-2)
+        返回: [B, S, D] top-down信号
+        """
+        idx = min(target_layer, len(self.projections) - 1)
+        return self.projections[idx](h_upper)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 神经调质系统
+# ═══════════════════════════════════════════════════════════════════════════
+class Neuromodulator(nn.Module):
+    """v6: DA + CB + G + Hebbian + Glial + STP + Homeostatic"""
+    def __init__(self, seq_len: int, d_model: int, config: dict):
+        super().__init__()
+        self.seq_len = seq_len
+        self.d_model = d_model
+        nm = config.get('neuromod', {})
+
+        # DA
+        self.register_buffer('da_ema', torch.tensor(nm.get('da_init', 0.5)))
+        self.register_buffer('da_var', torch.tensor(0.1))
+        self.da_min = nm.get('da_min', 0.1)
+        self.da_max = nm.get('da_max', 0.9)
+
+        # CB
+        self.cb_threshold = nm.get('cb_threshold', 0.25)
+        self.use_cb = nm.get('use_cb', False)
+
+        # G
+        init_density = nm.get('init_density', 0.3)
+        self.register_buffer('G', torch.rand(seq_len, seq_len) * init_density)
+        self.register_buffer('alive_mask', torch.ones(seq_len, seq_len))
+        self.target_sparsity = nm.get('target_sparsity', 0.70)
+
+        # Hebbian
+        self.hebbian = HebbianPlasticity(seq_len, config)
+        # Glial
+        self.glial = GlialSystem(seq_len, d_model, config)
+        # [v6] STP
+        self.stp = ShortTermPlasticity(seq_len, d_model, config)
+        # [v6] Homeostatic
+        self.homeostatic = HomeostaticPlasticity(seq_len, config)
+
+        self.register_buffer('step_counter', torch.tensor(0, dtype=torch.long))
+
+    def update_DA(self, pred_loss, ema_alpha=0.95, var_alpha=0.95):
+        pred_loss_t = torch.tensor(pred_loss, device=self.da_ema.device)
+        if torch.isnan(pred_loss_t) or torch.isinf(pred_loss_t):
+            return self.da_ema.item()
+        self.da_ema.copy_(ema_alpha * self.da_ema + (1 - ema_alpha) * pred_loss_t)
+        self.da_var.copy_(var_alpha * self.da_var + (1 - var_alpha) * (pred_loss_t - self.da_ema).pow(2))
+        surprise = (pred_loss_t - self.da_ema) / (self.da_var.sqrt() + 1e-8)
+        return torch.clamp(torch.sigmoid(surprise), self.da_min, self.da_max).item()
+
+    def update_CB(self, sync_metric):
+        if not self.use_cb or sync_metric is None:
+            return 0.0
+        if sync_metric > self.cb_threshold:
+            return min((sync_metric - self.cb_threshold) / (1.0 - self.cb_threshold + 1e-8), 1.0)
+        return 0.0
+
+    def get_G_mask(self):
+        G_sparse = self.G * self.alive_mask
+        G_abs = G_sparse.abs()
+        G_max = G_abs.max()
+        if G_max > 0:
+            G_sparse = G_sparse / G_max
+            flat = G_abs.flatten()
+            k = int(self.target_sparsity * flat.numel())
+            if 0 < k < flat.numel():
+                thr = torch.topk(flat, k, largest=False)[0][-1]
+                G_sparse = G_sparse * (G_abs >= thr).float()
+        return G_sparse
+
+    @torch.no_grad()
+    def hebbian_update(self, phase):
+        self.G.copy_(self.hebbian.update(self.G, self.alive_mask, phase))
+
+    @torch.no_grad()
+    def glial_update(self, amp_sq):
+        self.step_counter += 1
+        if self.step_counter % self.glial.calcium_interval == 0:
+            self.G.copy_(self.glial.calcium_wave(self.G) * self.alive_mask)
+
+    def get_energy_gate(self, amp_sq):
+        return self.glial.compute_energy_gate(amp_sq)
+
+    def get_energy_loss(self, amp_sq):
+        return self.glial.energy_loss(amp_sq)
+
+    def compute_sync_metric(self, phase):
+        return self.hebbian.compute_sync_metric(phase)
+
+    @torch.no_grad()
+    def stp_step(self, activity):
+        self.stp.step(activity)
+
+    def get_stp_efficacy(self):
+        return self.stp.get_efficacy()
+
+    @torch.no_grad()
+    def homeostatic_update(self, activity):
+        self.homeostatic.update(activity)
+
+    def apply_homeostatic_gain(self, x):
+        return self.homeostatic.apply_gain(x)
+
+    def prune_G(self, prune_ratio=0.05):
+        flat_G = self.G.abs().flatten()
+        k = int(prune_ratio * flat_G.numel())
+        if k > 0:
+            thr = torch.topk(flat_G, k, largest=False)[0][-1]
+            self.alive_mask.copy_((self.G.abs() > thr).float())
+
+    def enforce_mask(self):
+        self.G.mul_(self.alive_mask)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 完整模型
+# ═══════════════════════════════════════════════════════════════════════════
+class HormonicFormer(nn.Module):
+    """
+    HormonicFormer v6 - 完整生物神经机制
+
+    处理流程:
+      1. Forward Pass (底层→顶层, top_down=None)
+         → 保存每层输出 h[0..N-1]
+      2. Feedback Iteration × K (默认1轮):
+         → 从顶层开始, 逐层生成top-down信号
+         → 重新前向, 树突apical接收top-down
+      3. 分类 + 损失
+
+    这模拟了皮层的 "recurrent processing" —
+    初始前馈扫描后, 反馈回路精炼表征.
+    """
+    def __init__(self, config: dict):
+        super().__init__()
+        self.config = config
+        mc = config['model']
+
+        d_model = mc['d_model']
+        n_heads = mc['n_heads']
+        n_layers = mc['n_layers']
+        seq_len = mc['seq_len']
+        n_steps = mc['n_steps']
+        patch_size = mc['patch_size']
+        dropout = mc.get('dropout', 0.1)
+        D0_amp = mc.get('D0_amp', 0.1)
+        D0_phase = mc.get('D0_phase', 0.05)
+        dt = mc.get('dt', 0.05)
+        noise_scale = mc.get('noise_scale', 0.005)
+        feedback_strength = mc.get('feedback_strength', 0.1)
+
+        self.n_layers = n_layers
+        self.n_feedback_iters = config.get('topdown', {}).get('n_feedback_iters', 1)
+
+        # 输入嵌入
+        self.patch_embed = nn.Conv2d(1, d_model, kernel_size=patch_size, stride=patch_size)
+        self.pos_enc = LearnablePositionalEncoding(d_model, max_len=seq_len + 1)
+        self.embed_drop = nn.Dropout(dropout)
+
+        # Hormonic Blocks
+        self.blocks = nn.ModuleList([
+            HormonicBlock(
+                d_model, n_heads, seq_len, n_steps,
+                D0_amp, D0_phase, dt, noise_scale,
+                dropout, True, feedback_strength,
+            )
+            for _ in range(n_layers)
+        ])
+
+        # 神经调质 (v6: 包含STP + Homeostatic)
+        self.neuromod = Neuromodulator(seq_len, d_model, config)
+
+        # 跨频耦合
+        self.cfc = CrossFrequencyCoupling(d_model, n_layers)
+
+        # [v6] Top-Down反馈投影
+        self.topdown = TopDownProjection(d_model, n_layers, dropout)
+
+        # 预测编码
+        pc_cfg = config.get('pc', {})
+        self.use_pc = pc_cfg.get('use_pc', False)
+        self.aux_weight = pc_cfg.get('aux_weight', 0.01)
+        if self.use_pc:
+            pred_hidden = d_model * pc_cfg.get('pred_hidden_mult', 4)
+            self.predictors = nn.ModuleList([
+                nn.Sequential(
+                    nn.Linear(d_model, pred_hidden), nn.GELU(),
+                    nn.Linear(pred_hidden, d_model),
+                )
+                for _ in range(n_layers - 1)
+            ])
+        else:
+            self.predictors = None
+
+        # 分类头
+        n_classes = mc['n_classes']
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, d_model // 2), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(d_model // 2, n_classes),
+        )
+
+        self._init_weights()
+        self._log_params()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0)
+
+    def _log_params(self):
+        total = sum(p.numel() for p in self.parameters())
+        trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        print(f"[HormonicFormer v6] Total: {total:,} | Trainable: {trainable:,}")
+
+    def _run_layers(self, x, x_input, DA, CB, G_mask,
+                    top_down_signals=None):
+        """
+        单次前向: 所有层依次处理
+
+        top_down_signals: list[Tensor] 或 None
+          若非None, top_down_signals[i] 是第i层接收的反馈
+
+        返回: x, layer_outputs, aux_losses, energy_losses
+        """
+        aux_losses = []
+        energy_losses = []
+        layer_outputs = []
+        prev_phase = None
+        prev_amp_sq = None
+
+        for i, block in enumerate(self.blocks):
+            x_prev = x
+
+            # 能量门控
+            if i > 0 and prev_amp_sq is not None:
+                energy_gate = self.neuromod.get_energy_gate(prev_amp_sq)
+            else:
+                energy_gate = None
+
+            # STP效能
+            stp_eff = self.neuromod.get_stp_efficacy()
+
+            # Top-Down信号
+            td = None
+            if top_down_signals is not None and i < len(top_down_signals):
+                td = top_down_signals[i]
+
+            # 核心
+            x, field_amp, phase = block(
+                x, x_input, DA=DA, CB=CB, G_mask=G_mask,
+                energy_gate=energy_gate, prev_phase=prev_phase,
+                cfc=self.cfc, layer_idx=i,
+                stp_efficacy=stp_eff, top_down=td,
+            )
+
+            # [v6] 稳态增益
+            x = self.neuromod.apply_homeostatic_gain(x)
+
+            prev_phase = phase.detach()
+            prev_amp_sq = field_amp.pow(2).detach()
+            layer_outputs.append(x)
+
+            # 训练时更新
+            if self.training:
+                self.neuromod.stp_step(prev_amp_sq)
+                self.neuromod.hebbian_update(phase.detach())
+                self.neuromod.glial_update(prev_amp_sq)
+                self.neuromod.homeostatic_update(prev_amp_sq)
+                energy_losses.append(self.neuromod.get_energy_loss(prev_amp_sq))
+
+                if self.neuromod.use_cb:
+                    sync_R = self.neuromod.compute_sync_metric(phase.detach())
+                    CB = self.neuromod.update_CB(sync_R)
+
+            # 预测编码
+            if self.use_pc and self.predictors is not None and i > 0:
+                pred = self.predictors[i - 1](x_prev)
+                aux_losses.append(F.mse_loss(pred, x.detach()))
+
+        return x, layer_outputs, aux_losses, energy_losses
+
+    def forward(self, images, targets=None):
+        B = images.shape[0]
+
+        # 嵌入
+        x = self.patch_embed(images).flatten(2).transpose(1, 2)
+        x = self.pos_enc(x)
+        x = self.embed_drop(x)
+        x_input = x.detach()
+
+        G_mask = self.neuromod.get_G_mask()
+        DA = self.neuromod.da_ema.item()
+        CB = 0.0
+
+        # ── Pass 1: 纯前馈 (top_down=None) ──
+        x_ff, layer_outputs, aux_losses, energy_losses = self._run_layers(
+            x, x_input, DA, CB, G_mask, top_down_signals=None,
+        )
+
+        # ── Pass 2..K: 反馈迭代 ──
+        for fb_iter in range(self.n_feedback_iters):
+            # 生成每层的top-down信号: 高层→低层
+            td_signals = [None] * self.n_layers  # 最高层无反馈
+            for i in range(self.n_layers - 2, -1, -1):
+                # layer i+1 的输出 → 投影为 layer i 的 apical 信号
+                td_signals[i] = self.topdown.project(
+                    layer_outputs[i + 1].detach() if fb_iter == 0
+                    else layer_outputs[i + 1],
+                    target_layer=i,
+                )
+
+            # 重新运行所有层 (带top-down)
+            x_fb, layer_outputs, aux_fb, energy_fb = self._run_layers(
+                x, x_input, DA, CB, G_mask, top_down_signals=td_signals,
+            )
+            aux_losses.extend(aux_fb)
+            energy_losses.extend(energy_fb)
+            x_ff = x_fb  # 最终输出取最后一轮
+
+        # 全局池化 + 分类
+        x_pool = x_ff.mean(dim=1)
+        logits = self.classifier(x_pool)
+
+        if targets is not None:
+            ce_loss = F.cross_entropy(logits, targets)
+            total_aux = torch.stack(aux_losses).mean() if aux_losses else torch.zeros(1, device=logits.device)
+            total_energy = torch.stack(energy_losses).mean() if energy_losses else torch.zeros(1, device=logits.device)
+            energy_w = self.config.get('glial', {}).get('energy_loss_weight', 0.01)
+            total_loss = ce_loss + self.aux_weight * total_aux + energy_w * total_energy
+            return logits, total_loss
+
+        return logits
+
+    def update_neuromod(self, pred_loss, sync_metric=None):
+        DA = self.neuromod.update_DA(pred_loss)
+        CB = self.neuromod.update_CB(sync_metric) if sync_metric else 0.0
+        return DA, CB
+
+    def prune_and_regrow(self, epoch, interval=5, regrow_ratio=0.02):
+        if epoch % interval == 0 and epoch > 0:
+            self.neuromod.prune_G(prune_ratio=0.05)
+            dead_mask = (self.neuromod.alive_mask == 0)
+            n_dead = dead_mask.sum().item()
+            if n_dead > 0:
+                n_regrow = max(1, int(regrow_ratio * n_dead))
+                dead_idx = torch.where(dead_mask.flatten())[0]
+                perm = torch.randperm(len(dead_idx), device=dead_idx.device)[:n_regrow]
+                sel = dead_idx[perm]
+                self.neuromod.alive_mask.flatten()[sel] = 1.0
+                self.neuromod.G.flatten()[sel] = torch.randn(
+                    n_regrow, device=self.neuromod.G.device) * 0.01
+        self.neuromod.enforce_mask()
+
+    def get_diagnostics(self):
+        G_sparse = self.neuromod.get_G_mask()
+        stp_eff = self.neuromod.get_stp_efficacy()
+        return {
+            'DA': self.neuromod.da_ema.item(),
+            'da_var': self.neuromod.da_var.item(),
+            'G_sparsity': (G_sparse == 0).float().mean().item(),
+            'alive_ratio': self.neuromod.alive_mask.mean().item(),
+            'energy_mean': self.neuromod.glial.energy_ema.mean().item(),
+            'stp_u_mean': self.neuromod.stp.u.mean().item(),
+            'stp_r_mean': self.neuromod.stp.r.mean().item(),
+            'stp_efficacy_mean': stp_eff.mean().item(),
+            'homeo_gain_mean': self.neuromod.homeostatic.gain.mean().item(),
+            'homeo_gain_std': self.neuromod.homeostatic.gain.std().item(),
+            'step_counter': self.neuromod.step_counter.item(),
+        }
+
+
+================================================================================
+FILE: scripts\train.py
+================================================================================
+
+"""
+HormonicFormer v4 - DCU训练脚本
+适配国家算力网 PyTorch 2.7.1 + DTK 26.04
+
+v4改进:
+  1. 修复deprecated AMP API -> torch.amp.autocast / torch.amp.GradScaler
+  2. 实现checkpoint保存/加载 + --resume功能
+  3. 实现早停 (max_stale_epochs)
+  4. DDP正确使用DistributedSampler
+  5. 实现warmup + cosine调度
+  6. 实现noise_sigma数据增强
+  7. 梯度裁剪 (grad_clip)
+  8. NaN guard修复 (跳步时正确清零梯度)
+  9. 模型参数统计
+  10. 训练日志CSV输出
+"""
+import os
+import sys
+import yaml
+import time
+import random
+import csv
+import math
+import numpy as np
+from pathlib import Path
+from datetime import datetime
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, DistributedSampler
+
+sys.path.insert(0, str(Path(__file__).parent.parent / 'models'))
+from hormonicformer_v3 import HormonicFormer
+from torchvision import datasets, transforms
+
+
+# ---------------------------------------------------------------------------
+# 分布式 & 设备
+# ---------------------------------------------------------------------------
+def setup_distributed():
+    """初始化分布式训练"""
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ['RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+        local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    else:
+        rank = 0
+        world_size = 1
+        local_rank = 0
+
+    if world_size > 1:
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend='nccl', rank=rank, world_size=world_size)
+
+    return rank, world_size, local_rank
+
+
+def get_device():
+    """获取设备信息"""
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        props = torch.cuda.get_device_properties(0)
+        total_mem = props.total_memory / (1024 ** 3)
+        print(f"[Device] {torch.cuda.get_device_name(0)} | {total_mem:.1f} GB")
+        return device
+    print("[Device] CPU")
+    return torch.device('cpu')
+
+
+# ---------------------------------------------------------------------------
+# 学习率调度: Warmup + Cosine
+# ---------------------------------------------------------------------------
+class WarmupCosineScheduler:
+    """线性warmup + cosine退火"""
+    def __init__(self, optimizer, warmup_epochs: int, total_epochs: int,
+                 steps_per_epoch: int, min_lr_ratio: float = 0.01):
+        self.optimizer = optimizer
+        self.warmup_steps = warmup_epochs * steps_per_epoch
+        self.total_steps = total_epochs * steps_per_epoch
+        self.base_lrs = [pg['lr'] for pg in optimizer.param_groups]
+        self.min_lr_ratio = min_lr_ratio
+        self.current_step = 0
+
+    def step(self):
+        self.current_step += 1
+        lr_scale = self._get_lr_scale()
+        for pg, base_lr in zip(self.optimizer.param_groups, self.base_lrs):
+            pg['lr'] = base_lr * lr_scale
+
+    def _get_lr_scale(self) -> float:
+        if self.current_step < self.warmup_steps:
+            # 线性warmup
+            return max(self.current_step / max(self.warmup_steps, 1), 1e-6)
+        else:
+            # Cosine退火
+            progress = (self.current_step - self.warmup_steps) / \
+                       max(self.total_steps - self.warmup_steps, 1)
+            return self.min_lr_ratio + (1 - self.min_lr_ratio) * \
+                   0.5 * (1 + math.cos(math.pi * progress))
+
+    def get_lr(self) -> float:
+        return self.optimizer.param_groups[0]['lr']
+
+
+# ---------------------------------------------------------------------------
+# 数据
+# ---------------------------------------------------------------------------
+def get_dataloaders(config: dict, rank: int, world_size: int):
+    """构建数据加载器 (v4: 噪声增强 + DDP Sampler)"""
+    tc = config['train']
+    noise_sigma = tc.get('noise_sigma', 0.0)
+
+    # 训练变换: 含噪声增强
+    train_transforms = [
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,)),
+    ]
+    if noise_sigma > 0:
+        train_transforms.append(AddGaussianNoise(sigma=noise_sigma))
+
+    test_transforms = [
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,)),
+    ]
+
+    train_ds = datasets.FashionMNIST(
+        tc.get('data_root', './data'), train=True, download=True,
+        transform=transforms.Compose(train_transforms),
+    )
+    test_ds = datasets.FashionMNIST(
+        tc.get('data_root', './data'), train=False, download=True,
+        transform=transforms.Compose(test_transforms),
+    )
+
+    # DDP: 使用DistributedSampler (v4修复)
+    train_sampler = None
+    shuffle = True
+    if world_size > 1:
+        train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=rank)
+        shuffle = False
+
+    train_loader = DataLoader(
+        train_ds, batch_size=tc['batch_size'], shuffle=shuffle,
+        sampler=train_sampler,
+        num_workers=tc.get('num_workers', 4),
+        pin_memory=tc.get('pin_memory', True),
+        drop_last=True,
+    )
+    test_loader = DataLoader(
+        test_ds, batch_size=tc['batch_size'] * 2, shuffle=False,
+        num_workers=tc.get('num_workers', 4),
+        pin_memory=tc.get('pin_memory', True),
+    )
+
+    return train_loader, test_loader, train_sampler
+
+
+class AddGaussianNoise:
+    """高斯噪声数据增强"""
+    def __init__(self, sigma: float = 0.1):
+        self.sigma = sigma
+
+    def __call__(self, tensor):
+        return tensor + torch.randn_like(tensor) * self.sigma
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint
+# ---------------------------------------------------------------------------
+def save_checkpoint(model, optimizer, scheduler, epoch: int, best_acc: float,
+                    config: dict, path: str):
+    """保存checkpoint (v4新增)"""
+    state = {
+        'epoch': epoch,
+        'best_acc': best_acc,
+        'config': config,
+        'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_step': scheduler.current_step if hasattr(scheduler, 'current_step') else 0,
+    }
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    torch.save(state, path)
+    print(f"[Checkpoint] Saved: {path}")
+
+
+def load_checkpoint(path: str, model, optimizer=None, scheduler=None, device='cuda'):
+    """加载checkpoint (v4新增)"""
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    model_to_load = model.module if hasattr(model, 'module') else model
+    model_to_load.load_state_dict(ckpt['model_state_dict'])
+
+    if optimizer and 'optimizer_state_dict' in ckpt:
+        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+
+    if scheduler and 'scheduler_step' in ckpt:
+        scheduler.current_step = ckpt['scheduler_step']
+
+    print(f"[Checkpoint] Loaded: {path} (epoch {ckpt['epoch']}, best_acc {ckpt['best_acc']:.4f})")
+    return ckpt['epoch'], ckpt['best_acc']
+
+
+# ---------------------------------------------------------------------------
+# 训练 & 评估
+# ---------------------------------------------------------------------------
+def train_epoch(model, loader, optimizer, scaler, scheduler, device, epoch,
+                rank, config):
+    """训练一个epoch (v4: 梯度裁剪, NaN修复, warmup调度)"""
+    model.train()
+
+    if hasattr(loader.sampler, 'set_epoch'):
+        loader.sampler.set_epoch(epoch)
+
+    tc = config['train']
+    accumulation_steps = tc.get('accumulation_steps', 1)
+    use_amp = tc.get('use_amp', True)
+    grad_clip = tc.get('grad_clip', 0.0)
+    nan_guard = tc.get('nan_guard', True)
+
+    total_loss = 0.0
+    total_acc = 0.0
+    num_batches = 0
+    nan_skips = 0
+
+    optimizer.zero_grad()
+
+    for batch_idx, (images, targets) in enumerate(loader):
+        images = images.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
+
+        # 前向
+        with torch.amp.autocast('cuda', enabled=use_amp):
+            logits, loss = model(images, targets)
+            loss_scaled = loss / accumulation_steps
+
+        # 反向
+        scaler.scale(loss_scaled).backward()
+
+        # 梯度累积到位
+        if (batch_idx + 1) % accumulation_steps == 0:
+            # NaN检测 (v4: 修复 - 跳步时也清零梯度)
+            if nan_guard:
+                scaler.unscale_(optimizer)
+                has_nan = any(
+                    torch.isnan(p.grad).any() for p in model.parameters()
+                    if p.grad is not None
+                )
+                if has_nan:
+                    nan_skips += 1
+                    optimizer.zero_grad()  # v4修复: 清零被污染的梯度
+                    scaler.update()
+                    if rank == 0 and nan_skips <= 5:
+                        print(f"  [WARN] NaN grad at batch {batch_idx}, skipping")
+                    continue
+
+                # 梯度裁剪 (v4新增, unscale之后)
+                if grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            else:
+                scaler.unscale_(optimizer)
+                if grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+
+            # warmup + cosine步进
+            scheduler.step()
+
+        # 统计
+        with torch.no_grad():
+            pred = logits.argmax(dim=1)
+            acc = (pred == targets).float().mean()
+
+        total_loss += loss.item()
+        total_acc += acc.item()
+        num_batches += 1
+
+        # 打印
+        if batch_idx % tc.get('log_interval', 50) == 0 and rank == 0:
+            lr = scheduler.get_lr()
+            print(f"  [{batch_idx}/{len(loader)}] loss={loss.item():.4f} "
+                  f"acc={acc.item():.3f} lr={lr:.2e}")
+
+    avg_loss = total_loss / max(num_batches, 1)
+    avg_acc = total_acc / max(num_batches, 1)
+
+    if nan_skips > 0 and rank == 0:
+        print(f"  [WARN] Total NaN skips this epoch: {nan_skips}")
+
+    return avg_loss, avg_acc
+
+
+@torch.no_grad()
+def evaluate(model, loader, device, config):
+    """评估"""
+    model.eval()
+    use_amp = config['train'].get('use_amp', True)
+    total_loss = 0.0
+    total_acc = 0.0
+    num_batches = 0
+
+    for images, targets in loader:
+        images = images.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
+
+        with torch.amp.autocast('cuda', enabled=use_amp):
+            logits, loss = model(images, targets)
+
+        pred = logits.argmax(dim=1)
+        acc = (pred == targets).float().mean()
+
+        total_loss += loss.item()
+        total_acc += acc.item()
+        num_batches += 1
+
+    return total_loss / max(num_batches, 1), total_acc / max(num_batches, 1)
+
+
+# ---------------------------------------------------------------------------
+# 主流程
+# ---------------------------------------------------------------------------
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description='HormonicFormer v5 Training')
+    parser.add_argument('--config', type=str, default='config.yaml')
+    parser.add_argument('--resume', type=str, default=None, help='Checkpoint path to resume')
+    args = parser.parse_args()
+
+    # 加载配置
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
+
+    # 分布式
+    rank, world_size, local_rank = setup_distributed()
+    device = get_device()
+
+    if rank == 0:
+        print("=" * 70)
+        print("HormonicFormer v5 - DCU Training")
+        print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"World Size: {world_size}")
+        print("=" * 70)
+
+    # 种子
+    seed = config['train'].get('seed', 42)
+    random.seed(seed + rank)
+    np.random.seed(seed + rank)
+    torch.manual_seed(seed + rank)
+
+    # 数据 (v4: DDP sampler + 噪声增强)
+    train_loader, test_loader, train_sampler = get_dataloaders(config, rank, world_size)
+
+    # 模型
+    model = HormonicFormer(config).to(device)
+    if world_size > 1:
+        model = DDP(model, device_ids=[local_rank],
+                    find_unused_parameters=config['dist'].get('find_unused_parameters', False))
+
+    # 优化器
+    tc = config['train']
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=tc['lr'], weight_decay=tc['weight_decay']
+    )
+
+    # 学习率调度 (v4: warmup + cosine)
+    scheduler = WarmupCosineScheduler(
+        optimizer,
+        warmup_epochs=tc.get('warmup_epochs', 3),
+        total_epochs=tc['epochs'],
+        steps_per_epoch=len(train_loader) // tc.get('accumulation_steps', 1),
+    )
+
+    # AMP (v4: 使用新API)
+    scaler = torch.amp.GradScaler('cuda')
+
+    # Resume (v4: 实际生效)
+    start_epoch = 0
+    best_acc = 0.0
+    if args.resume:
+        start_epoch, best_acc = load_checkpoint(
+            args.resume, model, optimizer, scheduler, device
+        )
+        start_epoch += 1  # 从下一个epoch开始
+
+    # 日志CSV
+    ckpt_dir = tc.get('checkpoint_dir', './checkpoints')
+    log_dir = tc.get('log_dir', './logs')
+    os.makedirs(ckpt_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+
+    csv_path = os.path.join(log_dir, 'train_log.csv')
+    csv_exists = os.path.exists(csv_path)
+    if rank == 0:
+        csv_file = open(csv_path, 'a', newline='')
+        csv_writer = csv.writer(csv_file)
+        if not csv_exists:
+            csv_writer.writerow([
+                'epoch', 'train_loss', 'train_acc', 'val_loss', 'val_acc',
+                'lr', 'DA', 'CB', 'G_sparsity',
+                'stp_efficacy', 'homeo_gain', 'epoch_time'
+            ])
+
+    # 早停
+    stale_epochs = 0
+    max_stale = tc.get('max_stale_epochs', 10)
+
+    # ==================== 训练循环 ====================
+    for epoch in range(start_epoch, tc['epochs']):
+        if rank == 0:
+            print(f"\n{'=' * 70}")
+            print(f"Epoch {epoch + 1}/{tc['epochs']}")
+            print(f"{'=' * 70}")
+
+        t0 = time.time()
+        train_loss, train_acc = train_epoch(
+            model, train_loader, optimizer, scaler, scheduler,
+            device, epoch, rank, config,
+        )
+        epoch_time = time.time() - t0
+
+        # 评估 (仅rank 0)
+        if rank == 0:
+            val_loss, val_acc = evaluate(model, test_loader, device, config)
+
+            # 更新神经调质
+            base_model = model.module if hasattr(model, 'module') else model
+            DA, CB = base_model.update_neuromod(val_loss)
+            diag = base_model.get_diagnostics()
+
+            lr_now = scheduler.get_lr()
+
+            print(f"\n[Epoch {epoch + 1}]")
+            print(f"  Train: loss={train_loss:.4f} acc={train_acc:.3f}")
+            print(f"  Val:   loss={val_loss:.4f} acc={val_acc:.3f}")
+            print(f"  LR: {lr_now:.2e} | DA: {DA:.3f} | CB: {CB:.3f} | "
+                  f"G_sparsity: {diag['G_sparsity']:.1%}")
+            print(f"  STP: u={diag.get('stp_u_mean',0):.3f} r={diag.get('stp_r_mean',0):.3f} "
+                  f"eff={diag.get('stp_efficacy_mean',0):.3f} | "
+                  f"Homeo: gain={diag.get('homeo_gain_mean',1):.3f}"
+                  f"±{diag.get('homeo_gain_std',0):.3f}")
+            print(f"  Energy: {diag.get('energy_mean', 0):.3f} | "
+                  f"Alive: {diag.get('alive_ratio', 1):.1%} | "
+                  f"Time: {epoch_time:.1f}s")
+
+            # CSV日志
+            csv_writer.writerow([
+                epoch + 1, f'{train_loss:.4f}', f'{train_acc:.4f}',
+                f'{val_loss:.4f}', f'{val_acc:.4f}', f'{lr_now:.6f}',
+                f'{DA:.4f}', f'{CB:.4f}', f'{diag["G_sparsity"]:.4f}',
+                f'{diag.get("stp_efficacy_mean",0):.4f}',
+                f'{diag.get("homeo_gain_mean",1):.4f}',
+                f'{epoch_time:.1f}',
+            ])
+            csv_file.flush()
+
+            # Checkpoint
+            improved = val_acc > best_acc
+            if improved:
+                best_acc = val_acc
+                stale_epochs = 0
+                save_checkpoint(
+                    model, optimizer, scheduler, epoch, best_acc, config,
+                    os.path.join(ckpt_dir, 'best.pt'),
+                )
+            else:
+                stale_epochs += 1
+
+            if (epoch + 1) % tc.get('save_interval', 5) == 0:
+                save_checkpoint(
+                    model, optimizer, scheduler, epoch, best_acc, config,
+                    os.path.join(ckpt_dir, f'epoch_{epoch + 1}.pt'),
+                )
+
+            # 早停 (v4新增)
+            if stale_epochs >= max_stale:
+                print(f"\n[Early Stop] No improvement for {max_stale} epochs. Stopping.")
+                break
+
+        # BWO
+        base_model = model.module if hasattr(model, 'module') else model
+        bwo_cfg = config.get('bwo', {})
+        if bwo_cfg.get('use_bwo', False):
+            base_model.prune_and_regrow(
+                epoch, interval=bwo_cfg.get('evolve_interval', 5),
+                regrow_ratio=bwo_cfg.get('flip_ratio', 0.02),
+            )
+
+        if world_size > 1:
+            dist.barrier()
+
+    # 清理
+    if rank == 0:
+        csv_file.close()
+        print(f"\n{'=' * 70}")
+        print(f"Training Complete! Best Val Acc: {best_acc:.4f}")
+        print(f"Log: {csv_path}")
+        print(f"Best model: {os.path.join(ckpt_dir, 'best.pt')}")
+        print(f"{'=' * 70}")
+
+    if world_size > 1:
+        dist.destroy_process_group()
+
+
+if __name__ == '__main__':
+    main()
+
+
+================================================================================
+FILE: ARCHITECTURE_v6.md
+================================================================================
+# HormonicFormer v6 - 完整生物神经机制架构
+
+## 时间尺度谱 (9级)
+
+```
+τ ~ 0.2    STP促进/抑制           每CGL sub-step       ShortTermPlasticity
+τ ~ 1      CGL场演化              每step               HormonicBlock._cgl_step
+τ ~ 1      E/I平衡 (侧抑制)       每step               LocalEIBalance
+τ ~ 1      感觉反馈 + 跨频耦合     每step               W_feedback / CFC
+τ ~ 1      能量门控               每batch (EMA)         GlialSystem
+τ ~ 5      Top-Down反馈迭代       每forward 1-2轮       TopDownProjection
+τ ~ 10     Hebbian可塑性          每batch               HebbianPlasticity
+τ ~ 30     钙波扩散               周期性                GlialSystem.calcium_wave
+τ ~ 50     稳态可塑性             慢速EMA               HomeostaticPlasticity
+τ ~ 100    BWO剪枝+重生           每N个epoch            prune_and_regrow
+τ ~ 1000   DA/CB神经调质           EMA跨epoch            Neuromodulator.update_DA
+```
+
+## 处理流程
+
+```
+输入图像 [B, 1, 28, 28]
+    │
+    ▼
+┌───────────────────────────────┐
+│  Patch Embed + PosEnc + Drop  │
+└──────────┬────────────────────┘
+           │
+           │  x_input (detach) ────────────── 感觉反馈锚点
+           │
+    ═══════╪═══════════════════════════════════════════════
+    ║  Pass 1: 纯前馈 (top_down = None)                  ║
+    ║                                                     ║
+    ║  for layer i = 0..N-1:                              ║
+    ║    ┌──────────────────────────────────────────────┐  ║
+    ║    │  CGL场演化 (n_steps轮)                       │  ║
+    ║    │    反应: CGL非线性 + E/I平衡                  │  ║
+    ║    │    扩散: D_amp·∇²re + D_phase·∇²im           │  ║
+    ║    │    驱动: 感觉反馈 + 跨频耦合 + 能量门控       │  ║
+    ║    │    噪声: σ·√dt·N(0,1)                        │  ║
+    ║    └─────────────┬────────────────────────────────┘  ║
+    ║                  │ cgl_out                            ║
+    ║                  ▼                                   ║
+    ║    ┌──────────────────────────────────────────────┐  ║
+    ║    │  树突计算 (DendriticCompartment)              │  ║
+    ║    │    basal  = σ(W_b · cgl_out)     前馈通道    │  ║
+    ║    │    apical = tanh(W_a · top_down) 反馈通道    │  ║
+    ║    │    soma   = basal · (1 + λ·apical) 门控整合  │  ║
+    ║    └─────────────┬────────────────────────────────┘  ║
+    ║                  │ + 残差                             ║
+    ║                  ▼                                   ║
+    ║    ┌──────────────────────────────────────────────┐  ║
+    ║    │  场注意力 (FieldAttention)                    │  ║
+    ║    │    field_amp调制attn logits                   │  ║
+    ║    │    STP efficacy调制value                      │  ║
+    ║    └─────────────┬────────────────────────────────┘  ║
+    ║                  │ + 残差                             ║
+    ║                  ▼                                   ║
+    ║    FFN + 残差                                        ║
+    ║                  │                                   ║
+    ║    稳态增益: x = x · gain[s]                         ║
+    ║                  │                                   ║
+    ║    保存 h[i] (供反馈迭代使用)                         ║
+    ║                                                     ║
+    ║    训练时副作用:                                      ║
+    ║      STP.step(|ψ|²)        τ~0.2                    ║
+    ║      Hebbian.update(phase)  τ~10                    ║
+    ║      Glial.update(|ψ|²)    τ~30                    ║
+    ║      Homeostatic.update()   τ~50                    ║
+    ║      Kuramoto R → CB        τ~1                     ║
+    ║      PC: pred_i(x_prev) vs x  → aux_loss           ║
+    ╚═════╪═══════════════════════════════════════════════╝
+           │
+    ═══════╪═══════════════════════════════════════════════
+    ║  Pass 2: 反馈迭代 (n_feedback_iters轮)              ║
+    ║                                                     ║
+    ║  生成top-down信号:                                   ║
+    ║    for i = N-2 .. 0:                                ║
+    ║      td[i] = W_td[i](LayerNorm(h[i+1]))            ║
+    ║                                                     ║
+    ║  重新运行所有层 (top_down ≠ None)                    ║
+    ║    → 树突apical接收td[i]                            ║
+    ║    → 上下文调制前馈信号增益                           ║
+    ╚═════╪═══════════════════════════════════════════════╝
+           │
+           ▼
+    Global Average Pool → Classifier
+           │
+           ▼
+    Loss = CE + λ_aux·PC + λ_E·Energy
+```
+
+## v6 新增机制详解
+
+### [6] 树突计算 (DendriticCompartment)
+
+```
+生物原理:
+  锥体神经元有两类树突:
+  - 基底树突 (Basal): 接收前馈输入 (L4→L2/3)
+  - 顶端树突 (Apical): 接收反馈输入 (L5/6→L1)
+  胞体非线性整合两路信号
+
+数学:
+  basal  = GELU(W_b · x_ff)             前馈特征提取
+  apical = tanh(W_a · x_td)             反馈上下文 ∈(-1,1)
+  soma   = basal · (1 + λ · apical)     乘性门控
+
+关键设计:
+  - tanh: 允许抑制 (负值压制前馈) 和增强 (正值放大前馈)
+  - 乘性: 反馈不直接携带内容, 而是调制前馈内容的增益
+  - λ=0.5可学习: 控制反馈影响强度
+  - 当top_down=None → soma=basal, 退化为纯前馈
+
+与v5感觉反馈的区别:
+  感觉反馈: 持续注入同一个信号 (锚定)
+  树突反馈: 注入高层的上下文信号 (精炼)
+```
+
+### [7] 短时突触可塑性 (ShortTermPlasticity)
+
+```
+生物原理 (Tsodyks-Markram模型):
+  突触释放概率和囊泡资源随使用历史变化:
+  - 促进 (Facilitation): 高频→残余Ca²⁺累积→释放概率u↑
+  - 抑制 (Depression): 高频→囊泡耗竭→资源r↓
+
+数学:
+  u(t+1) = u + dt/τ_f · (U - u) + U·(1-u)·spike
+  r(t+1) = r + dt/τ_d · (1 - r) - u·r·spike
+  efficacy = u · r
+
+动态行为:
+  初始: u=0.2, r=1.0 → eff=0.2
+  第1-3次刺激: u↑快(τ_f=1), r↓慢(τ_d=3) → eff↑ (促进主导)
+  第4+次刺激: u饱和, r持续↓ → eff↓ (抑制主导)
+  停止刺激: u→U(快), r→1(慢) → 恢复
+
+作用点:
+  STP efficacy调制FieldAttention中的value权重
+  高频使用的token → 短暂增强后自动衰减
+
+与E/I平衡的区别:
+  E/I: 空间维度的侧抑制 (邻域)
+  STP: 时间维度的使用依赖变化 (历史)
+```
+
+### [8] 稳态可塑性 (HomeostaticPlasticity)
+
+```
+生物原理:
+  每个神经元维持目标放电率 (firing rate homeostasis).
+  偏离目标时全局缩放所有突触权重.
+
+数学:
+  activity_ema = α · ema + (1-α) · current
+  gain = gain + η · (target - activity_ema)
+  output = input · gain
+
+与其他机制的区别:
+  E/I平衡:   快(τ~1), 局部空间, 侧抑制
+  能量约束:  中(τ~1), 全局预算, hard限制
+  稳态可塑性: 慢(τ~50), 每位置独立, soft增益调节
+
+参数:
+  target_rate: 0.5    目标活动率
+  eta: 0.001          极慢调整 (τ~50)
+  gain范围: [0.1, 3.0] 防止极端值
+```
+
+### [9] Top-Down反馈 (TopDownProjection + 反馈迭代)
+
+```
+生物原理:
+  皮层有大致等量的前馈和反馈连接.
+  反馈连接从高层(L5/6)到低层(L1/apical dendrite).
+  实现"recurrent processing" — 初始前馈扫描后反馈精炼.
+
+实现:
+  1. Pass 1 (前馈): 所有层top_down=None, 保存h[0..N-1]
+  2. 生成td信号: td[i] = W_td[i](LN(h[i+1]))
+  3. Pass 2 (反馈): 树突apical接收td[i], 重新前向
+
+  每对层有独立投影 W_td[i]:
+    LayerNorm → Linear → Tanh → Dropout
+
+关键设计:
+  - Tanh输出∈(-1,1): 反馈可以增强或抑制
+  - 独立投影: 每层学习不同的反馈变换
+  - 第一轮反馈detach: 防止梯度爆炸
+  - n_feedback_iters可配置: 1=最小开销, 2=更精细
+
+计算开销:
+  n_feedback_iters=1 → ~2x前向计算
+  n_feedback_iters=2 → ~3x前向计算 (需充足显存)
+```
+
+## 机制交互矩阵
+
+```
+                 E/I   Hebb  Glial  STP   Homeo  TopDown  Dendrite
+CGL场演化         ←E/I  ←G    ←gate  -     -      -        -
+Attention          -     -     -     ←eff   -      -        -
+残差输出           -     -     -     -     ←gain   -       ←soma
+层间传递          ←CFC   -     -     -      -     ←td      -
+G矩阵更新         -     ←θ   ←Ca    -      -      -        -
+
+←: 被调制方向
+θ: 相位同步
+Ca: 钙波扩散
+eff: STP效能
+gate: 能量门控
+gain: 稳态增益
+td: top-down信号
+soma: 树突胞体整合
+```
+
+## 配置速查
+
+```yaml
+# v6新增
+stp:
+  U: 0.2          # 基线释放概率
+  tau_f: 1.0       # 促进τ (小=快促进)
+  tau_d: 3.0       # 抑制τ (大=慢恢复)
+
+homeostatic:
+  target_rate: 0.5 # 目标活动率
+  eta: 0.001       # 调整速率
+  ema_alpha: 0.99  # 平滑系数
+
+topdown:
+  n_feedback_iters: 1  # 反馈迭代次数 (1或2)
+```
+
+================================================================================
+FILE: CHANGELOG.md
+================================================================================
+# HormonicFormer v4 - 升级日志
+
+## 从 v3 到 v4: 24项修复与改进
+
+### 模型架构 (models/hormonicformer_v3.py)
+
+| # | 问题 | 修复 |
+|---|------|------|
+| 1 | CGL步骤per-feature for循环 (极慢) | **向量化**: Laplacian直接处理 `[B, S, D]` 张量, 消除循环 |
+| 2 | `n_heads` 参数定义但未使用 | **新增 `FieldAttention`**: 多头场注意力, 用CGL场幅度调制attention |
+| 3 | `ComplexField` 类定义但未使用 | 移除独立类, 幅度/相位计算集成到 `HormonicBlock` |
+| 4 | `G_mask` 计算后未被使用 | G_mask对角线作为**CGL扩散空间增益**调制场演化 |
+| 5 | 预测编码只捕获最后一层aux_loss | **每层独立predictor** + `torch.stack(aux_losses).mean()` 累积所有层 |
+| 6 | 无位置编码 | **新增 `LearnablePositionalEncoding`** + `SinusoidalPositionalEncoding` 备选 |
+| 7 | `D0_phase` 配置存在但未使用 | 振幅/相位使用**独立扩散系数** `D0_amp` 和 `D0_phase` |
+| 8 | `noise_scale` 配置存在但无噪声注入 | 训练时注入**随机CGL噪声** `sigma * sqrt(dt)` |
+| 9 | `aux_loss` 可能为 int 0 | 始终返回 `torch.Tensor`, 类型安全 |
+| 10 | `sparsity_target` 参数被忽略 | `get_G_mask()` 中**实际应用稀疏度阈值** |
+| 11 | 单一共享predictor跨所有层 | **`nn.ModuleList`** 每层独立predictor |
+| 12 | 无FFN层 | 每个HormonicBlock新增**GELU FFN** + 残差 |
+| 13 | 无LayerNorm | CGL和注意力分支前均有**LayerNorm** |
+| 14 | 无Dropout | 嵌入层、注意力、FFN均有**Dropout** |
+| 15 | 无参数统计 | `_log_params()` 打印总参数/可训练参数数量 |
+| 16 | 无诊断接口 | `get_diagnostics()` 返回DA/G_sparsity/alive_ratio |
+
+### 神经调质 (Neuromodulator)
+
+| # | 问题 | 修复 |
+|---|------|------|
+| 17 | DA的EMA状态为Python float, 不可序列化 | 改用 **`register_buffer`**, 随checkpoint保存/恢复 |
+| 18 | DA更新无NaN保护 | 加入 `isnan/isinf` 检查, 异常时返回当前值 |
+| 19 | BWO重生连接初始为0 | 重生连接用**小随机值 (0.01)** 初始化 |
+
+### 训练脚本 (scripts/train.py)
+
+| # | 问题 | 修复 |
+|---|------|------|
+| 20 | 使用deprecated `torch.cuda.amp.autocast/GradScaler` | 改为 **`torch.amp.autocast('cuda')` / `torch.amp.GradScaler('cuda')`** |
+| 21 | 无checkpoint保存/加载 | 完整实现 **`save_checkpoint` / `load_checkpoint`** |
+| 22 | `--resume` 参数定义但未实现 | **实际加载**模型/优化器/调度器状态并续训 |
+| 23 | 无早停 | **`max_stale_epochs`** 实际触发早停 |
+| 24 | DDP使用 `shuffle=True` 而非 `DistributedSampler` | 正确使用 **`DistributedSampler`** + `set_epoch` |
+| 25 | 无warmup (配置存在但未实现) | **`WarmupCosineScheduler`**: 线性warmup + cosine退火, 逐步调度 |
+| 26 | `noise_sigma` 配置存在但无数据增强 | **`AddGaussianNoise`** transform |
+| 27 | 无梯度裁剪 | **`grad_clip`** 配置项 + `clip_grad_norm_` |
+| 28 | NaN guard跳步时不清零梯度 | 跳步时 **`optimizer.zero_grad()`** 清除被污染梯度 |
+| 29 | 无训练日志 | **CSV日志**输出: epoch/loss/acc/lr/DA/CB/sparsity/time |
+| 30 | scaler.step前未unscale | NaN检测和梯度裁剪前先 **`scaler.unscale_(optimizer)`** |
+
+### DFT Laplacian (field/laplacian_dft.py)
+
+| # | 问题 | 修复 |
+|---|------|------|
+| 31 | 构造函数接受device参数但不可靠 | 移除device参数, **纯靠 `.to(device)`** 管理设备 |
+| 32 | 使用 `nn.Parameter(requires_grad=False)` | 改为 **`register_buffer`** (语义正确) |
+| 33 | 仅支持 `[B, seq]` 和 `[B, seq, 1]` | 支持**任意维度**, 自动判断seq维度位置 |
+| 34 | 3D输入需要for循环 | 完全**向量化**: reshape -> 批量DFT -> reshape回 |
+
+---
+
+## 目录结构
+
+```
+hormonic_v4/
+├── config.yaml                 # 主配置 (新增: grad_clip, warmup_epochs, D0_phase, noise_scale)
+├── launch.sh                   # 启动脚本 (新增: resume支持)
+├── test.sh                     # 测试脚本 (5项测试, 含向量化/BWO验证)
+├── field/
+│   └── laplacian_dft.py        # DFT Laplacian (向量化, register_buffer)
+├── models/
+│   └── hormonicformer_v3.py    # 完整模型 (新增: 位置编码/场注意力/FFN/LayerNorm)
+└── scripts/
+    └── train.py                # 训练脚本 (新增: warmup/checkpoint/早停/CSV日志)
+```
+
+## 部署
+
+与v3相同:
+```bash
+# 1. 上传
+scp -r hormonic_v4/ root@ssh.dzai.scnet.cn:/work/home/root/hormonic/
+
+# 2. 测试
+bash test.sh
+
+# 3. 训练
+bash launch.sh
+
+# 4. 续训 (新功能)
+RESUME=1 bash launch.sh
+```
+
+
+================================================================================
+汇总完成
+================================================================================
